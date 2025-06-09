@@ -1,18 +1,31 @@
 # Questions / Explorations
 
-* Distribution of upvotes?
-* Re-working data into useful data
-* What is word2vec?
-* How do we extract TLD+1 (i.e. domain or `github.com/yuuki`)
-* How do we convert word embeddings into an embedding for the title?
-	* Do we want cluster analysis on the topic of the title information? What does this buy us?
-	* Would it be helpful to learn topics? Maybe word2vec can give us this?
-	* It depends on how the title embedding can work?
+* Data investigation
+	* Distribution of upvotes?
+	* User-post-upvote distribution
+	* Domain-post-upvote distribution
+	* Data quality
+* Data cleaning
+	* Re-working data into useful data (e.g. extracting domain)
+	* Filtering to useful data?
+		* e.g. remove flagged data
+		* e.g. filter out missing title? missing url?
+			* Assume for now that there is a title / url
+	* e.g. Putting it into csv?
+	* How do we extract TLD+1 (i.e. domain or `github.com/yuuki`)
+* Investigation
+	* What is CBOW?
+	* What is word2vec?
+	* How do we convert word embeddings into an embedding for the title?
+		* Do we want cluster analysis on the topic of the title information? What does this buy us?
+		* Would it be helpful to learn topics? Maybe word2vec can give us this?
+		* It depends on how the title embedding can work?
 
 # Ideas
 
 * "Only learn from the best" - compare the title of a new submission to the "top X titles" to give a similarity score.
 	* Might be useful; might miss some things
+
 
 # Data filtering
 
