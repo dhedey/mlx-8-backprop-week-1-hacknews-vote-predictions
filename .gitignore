@@ -24,7 +24,6 @@ venv/
 # Machine Learning/Dataset files
 *.h5
 *.hdf5
-*.csv
 *.tsv
 *.pkl
 *.joblib
