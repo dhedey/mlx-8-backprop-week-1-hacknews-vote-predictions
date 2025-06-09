@@ -1,7 +1,8 @@
 # Questions / Explorations
 
 * Data investigation
-	* Distribution of upvotes?
+	* Histogram => Distribution of upvotes
+	* By month, hour of day, day of week => Total posts; Average upvotes/post
 	* User-post-upvote distribution
 	* Domain-post-upvote distribution
 	* Data quality
