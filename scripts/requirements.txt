@@ -1,0 +1,16 @@
+# Requirements for Domain Analysis Script
+# Analyzes URLs and extracts main domains from CSV files
+
+# Required for accurate domain extraction (handles complex TLDs)
+tldextract>=5.0.0
+
+# Optional: For better CSV handling with large files (if using pandas version)
+# pandas>=1.3.0
+
+# Note: The following are built-in Python modules (no installation needed):
+# - csv
+# - urllib.parse  
+# - collections
+# - sys
+# - os
+# - argparse 
