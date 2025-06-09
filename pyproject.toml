@@ -1,0 +1,14 @@
+[project]
+name = "mlx-8-backprop-week-1-hackernews-vote-predictions"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib>=3.10.3",
+    "numpy>=2.2.6",
+    "pandas>=2.3.0",
+]
+
+# https://docs.astral.sh/uv/concepts/projects/workspaces/
+[tool.uv.workspace]
+members = ["packages/*"]
