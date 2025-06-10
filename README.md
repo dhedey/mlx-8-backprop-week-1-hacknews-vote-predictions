@@ -2,7 +2,13 @@
 
 Install the `uv` package manager.
 
-Start with:
+To avoid an issue when running Jupyter notebook with scipy, you may need to run:
+
+```bash
+uv pip install pip setuptools
+```
+
+Then install dependencies with:
 
 ```bash
 uv sync --all-packages --dev

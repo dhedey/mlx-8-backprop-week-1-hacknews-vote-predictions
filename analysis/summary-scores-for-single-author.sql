@@ -7,7 +7,7 @@ data AS (
 	    type = 'story'
         AND title IS NOT NULL
         AND url IS NOT NULL
-        AND score IS NOT NULL
+        AND score IS NOT NULL AND score >= 1
 		AND (dead IS NULL OR dead = false)
 		-- AND by = 'rbanffy' -- Most frequent author
 		-- AND by = 'Tomte' -- 2nd most frequent author

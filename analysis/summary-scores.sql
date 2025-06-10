@@ -7,8 +7,8 @@ data AS (
 	    type = 'story'
         AND title IS NOT NULL
         AND url IS NOT NULL
-        AND score IS NOT NULL
-		AND dead IS NULL OR dead = false
+        AND score IS NOT NULL AND score >= 1
+		AND (dead IS NULL OR dead = false)
 )
 SELECT
 	score,

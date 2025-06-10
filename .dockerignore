@@ -21,7 +21,6 @@ venv/
 # Ignore dataset and ML model files
 *.h5
 *.hdf5
-*.csv
 *.tsv
 *.pkl
 *.joblib
