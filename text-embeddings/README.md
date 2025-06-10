@@ -1,0 +1,1 @@
+The text8 dataset is from https://huggingface.co/datasets/ardMLX/text8/blob/main/text8
