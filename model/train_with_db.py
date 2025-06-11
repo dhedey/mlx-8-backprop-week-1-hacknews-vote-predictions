@@ -6,7 +6,7 @@ This integrates the database data loader with the existing model architecture.
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from data_loader import HackerNewsDataLoader, create_connection_params
+from streaming_data_loader import HackerNewsStreamingDataLoader, create_connection_params
 import os
 import math
 from typing import Dict, Any
@@ -61,30 +61,29 @@ def simple_tokenizer(text: str, vocab_size: int = 10000) -> torch.Tensor:
     return torch.tensor(indices, dtype=torch.long)
 
 
-def collate_fn(batch):
+def process_batch(batch):
     """
-    Custom collate function to handle text data from database.
+    Process batch data from streaming data loader.
     """
-    ids = []
-    titles = []
-    scores = []
-    
-    for sample in batch:
-        ids.append(sample['id'])
-        titles.append(sample['title'] if sample['title'] else "")
-        scores.append(sample['score'])
+    # The streaming loader already returns tensors for numeric data and lists for text
+    ids = batch['id']
+    titles = batch['title']
+    scores = batch['score']
     
     # Tokenize titles
     tokenized_titles = torch.stack([simple_tokenizer(title) for title in titles])
     
-    # Convert scores to log scores
-    log_scores = torch.tensor([math.log(score) for score in scores], dtype=torch.float32)
+    # Convert scores to log scores - handle tensor input properly
+    if isinstance(scores, torch.Tensor):
+        log_scores = torch.log(scores.float())
+    else:
+        log_scores = torch.tensor([math.log(float(score)) for score in scores], dtype=torch.float32)
     
     return {
-        'ids': torch.tensor(ids),
+        'ids': ids,
         'titles': tokenized_titles,
-        'title_texts': titles,  # Keep original text for reference
-        'scores': torch.tensor(scores, dtype=torch.float32),
+        'title_texts': titles,
+        'scores': scores.float() if isinstance(scores, torch.Tensor) else torch.tensor(scores, dtype=torch.float32),
         'log_scores': log_scores
     }
 
@@ -97,7 +96,10 @@ def train_model_epoch(model, data_loader, criterion, optimizer, device):
     running_loss = 0.0
     total_batches = 0
     
-    for batch_idx, batch in enumerate(data_loader):
+    for batch_idx, raw_batch in enumerate(data_loader):
+        # Process the batch
+        batch = process_batch(raw_batch)
+        
         # Move data to device
         titles = batch['titles'].to(device)
         log_scores = batch['log_scores'].to(device).unsqueeze(1)  # Add dimension for regression
@@ -130,7 +132,10 @@ def evaluate_model(model, data_loader, criterion, device):
     actual_log_scores = []
     
     with torch.no_grad():
-        for batch in data_loader:
+        for raw_batch in data_loader:
+            # Process the batch
+            batch = process_batch(raw_batch)
+            
             titles = batch['titles'].to(device)
             log_scores = batch['log_scores'].to(device).unsqueeze(1)
             
@@ -186,33 +191,21 @@ def main():
     
     try:
         # Create data loader
-        print("Creating data loader...")
-        data_loader = HackerNewsDataLoader(
+        print("Creating streaming data loader...")
+        data_loader = HackerNewsStreamingDataLoader(
             connection_params=connection_params,
             table_name='hacker_news.items_by_month',
             columns=['id', 'title', 'score'],
             filter_condition=None,  # Uses default filter for HackerNews stories
             train_split=0.8,
             batch_size=16,
-            shuffle=True
+            shuffle=False,  # Streaming doesn't support shuffle yet
+            db_batch_size=1000
         )
         
-        # Get train and test loaders with custom collate function
-        train_loader = torch.utils.data.DataLoader(
-            data_loader.train_dataset,
-            batch_size=16,
-            shuffle=True,
-            collate_fn=collate_fn,
-            num_workers=0
-        )
-        
-        test_loader = torch.utils.data.DataLoader(
-            data_loader.test_dataset,
-            batch_size=16,
-            shuffle=False,
-            collate_fn=collate_fn,
-            num_workers=0
-        )
+        # Get train and test loaders - streaming loader handles batching internally
+        train_loader = data_loader.get_train_loader()
+        test_loader = data_loader.get_test_loader()
         
         # Print dataset info
         info = data_loader.get_data_info()
@@ -241,7 +234,8 @@ def main():
         
         # Example: Show some sample data
         print("\nSample data from first batch:")
-        for batch in train_loader:
+        for raw_batch in train_loader:
+            batch = process_batch(raw_batch)
             print(f"Batch size: {len(batch['ids'])}")
             print(f"Sample IDs: {batch['ids'][:3].tolist()}")
             print(f"Sample titles: {batch['title_texts'][:2]}")
@@ -250,12 +244,16 @@ def main():
             print(f"Tokenized shape: {batch['titles'].shape}")
             break
             
+        # Clean up database connections
+        data_loader.close()
+            
     except Exception as e:
         print(f"Error: {e}")
         print("\nMake sure to:")
         print("1. Set up your PostgreSQL database connection parameters")
         print("2. Ensure the 'items_by_month' table exists")
         print("3. Install required dependencies with uv")
+        raise e
 
 
 if __name__ == '__main__':

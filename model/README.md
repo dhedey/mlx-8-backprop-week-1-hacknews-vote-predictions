@@ -4,10 +4,10 @@ This directory contains PyTorch DataLoader implementations that connect to a Pos
 
 ## Files
 
-- `data_loader.py` - Main PostgreSQL DataLoader implementation
-- `train_with_db.py` - Example training script using the database DataLoader
+- `data_loader.py` - Original PostgreSQL DataLoader implementation (loads all data into memory)
+- `streaming_data_loader.py` - **NEW**: Streaming PostgreSQL DataLoader (loads data on-demand)
+- `train_with_db.py` - Example training script using the streaming database DataLoader
 - `config.py` - Configuration management for database and model parameters
-- `model.py` - Original model architecture (MNIST-based)
 
 ## Requirements
 
@@ -57,34 +57,40 @@ CREATE TABLE items_by_month (
 
 ## Usage
 
-### Basic Usage
+### Streaming DataLoader Usage (Recommended)
 
 ```python
-from data_loader import HackerNewsDataLoader, create_connection_params
+from streaming_data_loader import HackerNewsStreamingDataLoader, create_connection_params
 
 # Create connection parameters
-connection_params = create_connection_params(
-    host='localhost',
-    port=5432,
-    database='your_db',
-    user='your_user',
-    password='your_password'
-)
+connection_params = create_connection_params()  # Uses environment variables
 
-# Create data loader
-data_loader = HackerNewsDataLoader(
+# Create streaming data loader
+data_loader = HackerNewsStreamingDataLoader(
     connection_params=connection_params,
-    table_name='items_by_month',
-    columns=['id', 'title'],
-    filter_condition="(dead IS NULL OR dead = false)",
-    train_split=0.8,
-    batch_size=32
+    table_name='hacker_news.items_by_month',
+    columns=['id', 'title', 'score'],
+    filter_condition=None,  # Uses default HackerNews filter
+    train_split=0.8,        # 80% training (ID % 10 < 8)
+    batch_size=32,
+    db_batch_size=1000      # Fetch 1000 rows per DB query
 )
 
-# Get train and test loaders
+# Get train and test loaders - starts immediately, no waiting!
 train_loader = data_loader.get_train_loader()
 test_loader = data_loader.get_test_loader()
 ```
+
+### Train/Test Split Method
+
+The streaming loader uses **ID modulo 10** for deterministic splits:
+- **Training**: `ID % 10 < 8` (80% of data)  
+- **Testing**: `ID % 10 >= 8` (20% of data)
+
+This ensures:
+- ✅ Consistent splits across runs
+- ✅ No random state dependency  
+- ✅ Chronological ordering within each split
 
 ### Training Example
 
@@ -106,19 +112,23 @@ training_params = Config.get_training_params()
 
 ## Features
 
-### PostgreSQLDataset Class
+### Streaming PostgreSQL DataLoader (Recommended)
 
-- Connects to PostgreSQL database using psycopg2
-- Loads data with customizable SQL queries
-- Supports filtering with WHERE clauses
-- Returns data as PyTorch-compatible dictionaries
+**NEW**: `streaming_data_loader.py` provides memory-efficient data loading:
 
-### HackerNewsDataLoader Class
+- **On-demand loading**: Fetches data in batches as needed (no 4-hour wait!)
+- **Deterministic train/test split**: Uses `ID % 10` for consistent splits
+- **Time-ordered data**: Orders by `time` column for chronological training
+- **Memory efficient**: Only loads what's needed for current batch
+- **Progress tracking**: Shows loading progress with database batch fetching
 
-- Automatic train/test split (default 80/20)
-- Configurable batch size and shuffling
-- Reproducible random splits
-- Memory-efficient data loading
+### Original PostgreSQL DataLoader
+
+`data_loader.py` (legacy approach):
+- Loads entire dataset into memory
+- Uses random train/test split
+- Better for smaller datasets
+- May take hours for large datasets
 
 ### Key Parameters
 
