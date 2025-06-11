@@ -1,6 +1,8 @@
 WITH data AS (
 	SELECT
-		to_char(time, 'YYYY-MM') AS month
+		to_char(time, 'YYYY-MM') AS month,
+	    LOG(score) AS log_10_score,
+		score
 	FROM hacker_news.items
 	WHERE
 	    type = 'story'
@@ -11,7 +13,9 @@ WITH data AS (
 )
 SELECT
 	month,
-	COUNT(1) as count
+	COUNT(1) as count,
+	AVG(score) as avg_score,
+	AVG(log_10_score) AS avg_log_10_score
 FROM data
 GROUP BY
 	month

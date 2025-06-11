@@ -187,25 +187,7 @@ class BatchedStreamingDataLoader:
                 # Convert to batch dictionary
                 batch = {}
                 for col in batch_df.columns:
-                    if col in ['id', 'score']:
-                        # Convert to list first, then to tensor to avoid SQLAlchemy issues
-                        values = batch_df[col].astype(int).tolist()
-                        batch[col] = torch.tensor(values, dtype=torch.long if col == 'id' else torch.float32)
-                    else:
-                        # Convert to list for text columns
-                        batch[col] = batch_df[col].astype(str).tolist()
-                
-                # Debug: Print batch info for first batch
-                if offset == 0 and i == 0:
-                    print(f"First batch debug:")
-                    print(f"  df_batch shape: {batch_df.shape}")
-                    print(f"  df_batch columns: {list(batch_df.columns)}")
-                    print(f"  batch keys: {list(batch.keys())}")
-                    for key, value in batch.items():
-                        if isinstance(value, torch.Tensor):
-                            print(f"  {key}: tensor shape {value.shape}, dtype {value.dtype}")
-                        else:
-                            print(f"  {key}: list of length {len(value)}")
+                    batch[col] = batch_df[col].tolist()
                 
                 yield batch
             
@@ -221,8 +203,8 @@ class HackerNewsStreamingDataLoader:
     Streaming DataLoader wrapper for HackerNews data with train/test split using ID modulo.
     """
     
-    def __init__(self, connection_params: dict, table_name: str = None,
-                 columns: list = None, filter_condition: str = None,
+    def __init__(self, connection_params: dict, table_name: str,
+                 columns: list, filter_condition: str = None,
                  train_split: float = 0.8, batch_size: int = 32, 
                  shuffle: bool = True, db_batch_size: int = 1000, 
                  order_by: str = 'time'):
@@ -241,13 +223,9 @@ class HackerNewsStreamingDataLoader:
             order_by (str): Column to order the data by (default: 'time')
         """
         self.connection_params = connection_params
-        self.table_name = table_name or 'hacker_news.items_by_month'
-        self.columns = columns or ['id', 'title', 'score']
-        self.filter_condition = filter_condition or """type = 'story'
-        AND title IS NOT NULL
-        AND url IS NOT NULL
-        AND score IS NOT NULL AND score >= 1
-        AND (dead IS NULL OR dead = false)"""
+        self.table_name = table_name
+        self.columns = columns
+        self.filter_condition = filter_condition
         self.train_split = train_split
         self.batch_size = batch_size
         self.shuffle = shuffle
@@ -344,47 +322,3 @@ def create_connection_params(host: str = None, port: int = None,
         'user': user or os.getenv('POSTGRES_USER'),
         'password': password or os.getenv('POSTGRES_PASSWORD')
     }
-
-
-# Example usage
-if __name__ == "__main__":
-    # Create connection parameters from environment
-    connection_params = create_connection_params()
-    
-    # Create streaming data loader
-    data_loader = HackerNewsStreamingDataLoader(
-        connection_params=connection_params,
-        table_name='hacker_news.items_by_month',
-        columns=['id', 'title', 'score'],
-        filter_condition=None,  # Uses default HackerNews filter
-        train_split=0.8,
-        batch_size=16,
-        shuffle=False,
-        db_batch_size=1000
-    )
-    
-    # Get train and test loaders
-    train_loader = data_loader.get_train_loader()
-    test_loader = data_loader.get_test_loader()
-    
-    # Print dataset info
-    info = data_loader.get_data_info()
-    print("\nDataset Info:")
-    for key, value in info.items():
-        print(f"  {key}: {value}")
-    
-    # Example: iterate through first few batches
-    print("\nFirst few training batches:")
-    for i, batch in enumerate(train_loader):
-        print(f"Batch {i+1}:")
-        print(f"  Batch size: {len(batch['id'])}")
-        print(f"  Sample IDs: {batch['id'][:3].tolist()}")
-        print(f"  Sample titles: {batch['title'][:2]}")
-        if 'score' in batch:
-            print(f"  Sample scores: {batch['score'][:3].tolist()}")
-        
-        if i >= 2:  # Only show first 3 batches
-            break
-    
-    # Clean up
-    data_loader.close()

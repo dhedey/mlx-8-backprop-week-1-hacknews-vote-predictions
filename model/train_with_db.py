@@ -19,26 +19,52 @@ class HackerNewsNet(nn.Module):
     """
     
     def __init__(self, vocab_size: int = 10000, embedding_dim: int = 128, 
-                 hidden_dim: int = 256, output_dim: int = 1):
+                 hidden_dim: int = 256):
         super(HackerNewsNet, self).__init__()
-        self.embedding = nn.Embedding(vocab_size, embedding_dim)
-        self.fc1 = nn.Linear(embedding_dim, hidden_dim)
+
+        # TODO: Initialize from word2vec embeddings
+        self.title_embedding = nn.Embedding(vocab_size, embedding_dim)
+
+        input_feature_length = embedding_dim + 2  # Title embeddings + day of week + hour of day
+        hidden_dim_1_size = hidden_dim
+        hidden_dim_2_size = hidden_dim // 2
+        
+        # Layers
+        self.fc1 = nn.Linear(input_feature_length, hidden_dim_1_size)
         self.relu = nn.ReLU()
         self.dropout = nn.Dropout(0.2)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
-        self.fc3 = nn.Linear(hidden_dim // 2, output_dim)
+        self.fc2 = nn.Linear(hidden_dim_1_size, hidden_dim_2_size)
+        self.fc3 = nn.Linear(hidden_dim_2_size, 1)
         
-    def forward(self, x):
-        # x should be tokenized text indices
-        x = self.embedding(x)
-        x = torch.mean(x, dim=1)  # Simple averaging of embeddings
+    def forward(self, features):
+        tokenized_titles = features['tokenized_titles'] # Batch-length list of tokenized titles
+        title_token_embeddings = self.title_embedding(tokenized_titles) # (batch, title_length, embedding_dim)
+
+        # We now create features which we will concatenate together (along dimension 1)
+
+        # >> Create a naive list of title features by averaging the embedding of every token in the title
+        title_features = torch.mean(title_token_embeddings, dim=1)               # (batch, embedding_dim)
+        day_of_week_features = features['day_of_week_num'].unsqueeze(1).float()  # (batch, 1)
+        hour_of_day_features = features['hour_of_day'].unsqueeze(1).float()      # (batch, 1)
+
+        x = torch.cat(
+            [
+                title_features,
+                day_of_week_features,
+                hour_of_day_features,
+            ],
+            dim=1,
+        )
+        
+        # TODO: Improve model architecture!!
         x = self.fc1(x)
         x = self.relu(x)
         x = self.dropout(x)
         x = self.fc2(x)
         x = self.relu(x)
         x = self.fc3(x)
-        return x
+
+        return torch.squeeze(x, dim=1)  # The final dimension is size 1 - flatten it / remove it
 
 
 def simple_tokenizer(text: str, vocab_size: int = 10000) -> torch.Tensor:
@@ -60,31 +86,26 @@ def simple_tokenizer(text: str, vocab_size: int = 10000) -> torch.Tensor:
         
     return torch.tensor(indices, dtype=torch.long)
 
-
-def process_batch(batch):
+def process_batch(batch, device):
     """
     Process batch data from streaming data loader.
     """
     # The streaming loader already returns tensors for numeric data and lists for text
-    ids = batch['id']
-    titles = batch['title']
-    scores = batch['score']
+    ids = torch.tensor(batch['id'], dtype=torch.long)
+    scores = torch.tensor(batch['score'], dtype=torch.float32)
+    log_scores = torch.log(scores)
     
-    # Tokenize titles
-    tokenized_titles = torch.stack([simple_tokenizer(title) for title in titles])
-    
-    # Convert scores to log scores - handle tensor input properly
-    if isinstance(scores, torch.Tensor):
-        log_scores = torch.log(scores.float())
-    else:
-        log_scores = torch.tensor([math.log(float(score)) for score in scores], dtype=torch.float32)
-    
+    # TODO: Fix to use embedding
+    tokenized_titles = torch.stack([simple_tokenizer(title) for title in batch['title']])
+
     return {
-        'ids': ids,
-        'titles': tokenized_titles,
-        'title_texts': titles,
-        'scores': scores.float() if isinstance(scores, torch.Tensor) else torch.tensor(scores, dtype=torch.float32),
-        'log_scores': log_scores
+        'ids': ids.to(device),
+        'log_scores': log_scores.to(device),
+        'features': {
+            'tokenized_titles': tokenized_titles.to(device),
+            'day_of_week_num': torch.tensor([int(x) for x in batch['day_of_week_num']], dtype=torch.int).to(device),
+            'hour_of_day': torch.tensor([int(x) for x in batch['hour_of_day']], dtype=torch.int).to(device),
+        }
     }
 
 
@@ -98,15 +119,11 @@ def train_model_epoch(model, data_loader, criterion, optimizer, device):
     
     for batch_idx, raw_batch in enumerate(data_loader):
         # Process the batch
-        batch = process_batch(raw_batch)
-        
-        # Move data to device
-        titles = batch['titles'].to(device)
-        log_scores = batch['log_scores'].to(device).unsqueeze(1)  # Add dimension for regression
+        batch = process_batch(raw_batch, device)
         
         optimizer.zero_grad()
-        outputs = model(titles)
-        loss = criterion(outputs, log_scores)
+        outputs = model(batch['features'])
+        loss = criterion(outputs, batch['log_scores'])
         loss.backward()
         optimizer.step()
         
@@ -134,13 +151,10 @@ def evaluate_model(model, data_loader, criterion, device):
     with torch.no_grad():
         for raw_batch in data_loader:
             # Process the batch
-            batch = process_batch(raw_batch)
+            batch = process_batch(raw_batch, device)
             
-            titles = batch['titles'].to(device)
-            log_scores = batch['log_scores'].to(device).unsqueeze(1)
-            
-            outputs = model(titles)
-            loss = criterion(outputs, log_scores)
+            outputs = model(batch['features'])
+            loss = criterion(outputs, batch['log_scores'])
             total_loss += loss.item()
             total_batches += 1
             
@@ -194,9 +208,21 @@ def main():
         print("Creating streaming data loader...")
         data_loader = HackerNewsStreamingDataLoader(
             connection_params=connection_params,
-            table_name='hacker_news.items_by_month',
-            columns=['id', 'title', 'score'],
-            filter_condition=None,  # Uses default filter for HackerNews stories
+            table_name="hacker_news.items",
+            columns=[
+                'id',
+                'title',
+                'score',
+                "to_char(time, 'D') AS day_of_week_num",
+		        "to_char(time, 'HH') AS hour_of_day",
+            ],
+            filter_condition="""
+                type = 'story'
+                AND title IS NOT NULL
+                AND url IS NOT NULL
+                AND score IS NOT NULL AND score >= 1
+                AND (dead IS NULL OR dead = false)
+            """,  # Uses default filter for HackerNews stories
             train_split=0.8,
             batch_size=16,
             shuffle=False,  # Streaming doesn't support shuffle yet
@@ -214,7 +240,10 @@ def main():
             print(f"  {key}: {value}")
         
         # Initialize model
-        model = HackerNewsNet(vocab_size=10000, embedding_dim=128).to(device)
+        model = HackerNewsNet(
+            vocab_size=10000,
+            embedding_dim=128,
+        ).to(device)
         criterion = nn.MSELoss()  # MSE loss for predicting log scores
         optimizer = optim.Adam(model.parameters(), lr=0.001)
         

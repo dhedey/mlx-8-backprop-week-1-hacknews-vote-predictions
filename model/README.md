@@ -70,7 +70,14 @@ data_loader = HackerNewsStreamingDataLoader(
     connection_params=connection_params,
     table_name='hacker_news.items_by_month',
     columns=['id', 'title', 'score'],
-    filter_condition=None,  # Uses default HackerNews filter
+    filter_condition="""
+        type = 'story'
+        AND title IS NOT NULL
+        AND url IS NOT NULL
+        AND score IS NOT NULL AND score >= 1
+        AND (dead IS NULL OR dead = false)
+        AND date >=
+    """,
     train_split=0.8,        # 80% training (ID % 10 < 8)
     batch_size=32,
     db_batch_size=1000      # Fetch 1000 rows per DB query
