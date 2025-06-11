@@ -1,19 +1,23 @@
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split
-import psycopg2
 import pandas as pd
 from typing import Tuple, Optional
 import os
 from sklearn.model_selection import train_test_split
+from sqlalchemy import create_engine, text
+import urllib.parse
+from tqdm import tqdm
+import time
 
 
 class PostgreSQLDataset(Dataset):
     """
-    PyTorch Dataset for loading data from PostgreSQL database.
+    PyTorch Dataset for loading data from PostgreSQL database with batch loading and progress tracking.
     """
     
     def __init__(self, connection_params: dict, table_name: str, 
-                 columns: list, filter_condition: str = None):
+                 columns: list, filter_condition: str = None, 
+                 batch_size: int = 10000, order_by: str = 'time'):
         """
         Initialize the PostgreSQL Dataset.
         
@@ -22,51 +26,109 @@ class PostgreSQLDataset(Dataset):
             table_name (str): Name of the table to query
             columns (list): List of column names to select
             filter_condition (str): WHERE clause condition
+            batch_size (int): Number of rows to load per batch
+            order_by (str): Column to order the data by (default: 'time')
         """
         self.connection_params = connection_params
         self.table_name = table_name
         self.columns = columns
         self.filter_condition = filter_condition
+        self.batch_size = batch_size
+        self.order_by = order_by
         
         # Load data from database
         self.data = self._load_data()
         
     def _load_data(self) -> pd.DataFrame:
         """
-        Load data from PostgreSQL database.
+        Load data from PostgreSQL database using SQLAlchemy with batched loading and progress tracking.
         
         Returns:
             pd.DataFrame: Loaded data
         """
         try:
-            # Connect to PostgreSQL
-            conn = psycopg2.connect(**self.connection_params)
+            # Create SQLAlchemy engine
+            # URL encode the password to handle special characters
+            password = urllib.parse.quote_plus(self.connection_params['password'])
+            connection_url = (
+                f"postgresql://{self.connection_params['user']}:{password}@"
+                f"{self.connection_params['host']}:{self.connection_params['port']}/"
+                f"{self.connection_params['database']}"
+            )
             
-            # Build SQL query
+            engine = create_engine(connection_url)
+            
+            # First, get the total count for progress tracking
+            count_query = f"""
+                SELECT COUNT(*) as total_count
+                FROM {self.table_name}
+                {f'WHERE {self.filter_condition}' if self.filter_condition else ''}
+            """
+            
+            print(f"Getting total count from {self.table_name}...")
+            with engine.connect() as conn:
+                result = conn.execute(text(count_query))
+                total_count = result.scalar()
+            
+            print(f"Total rows to load: {total_count:,}")
+            
+            # Build main SQL query with ordering
             columns_str = ', '.join(self.columns)
-            if self.filter_condition:
-                query = f"""
-                    SELECT {columns_str}
-                    FROM {self.table_name}
-                    WHERE {self.filter_condition}
-                    ORDER BY id
-                """
+            base_query = f"""
+                SELECT {columns_str}
+                FROM {self.table_name}
+                {f'WHERE {self.filter_condition}' if self.filter_condition else ''}
+                ORDER BY {self.order_by}
+            """
+            
+            print(f"Loading data in batches of {self.batch_size:,} rows...")
+            print(f"Ordering by: {self.order_by}")
+            
+            # Load data in batches with progress tracking
+            all_dataframes = []
+            offset = 0
+            
+            # Create progress bar
+            pbar = tqdm(total=total_count, desc="Loading data", unit="rows")
+            
+            while offset < total_count:
+                batch_query = f"{base_query} LIMIT {self.batch_size} OFFSET {offset}"
+                
+                # Load batch
+                batch_df = pd.read_sql_query(batch_query, engine)
+                
+                if len(batch_df) == 0:
+                    break
+                
+                all_dataframes.append(batch_df)
+                offset += len(batch_df)
+                
+                # Update progress bar
+                pbar.update(len(batch_df))
+                pbar.set_postfix({
+                    'batch': len(all_dataframes),
+                    'loaded': f"{offset:,}",
+                    'remaining': f"{max(0, total_count - offset):,}"
+                })
+                
+                # Small delay to prevent overwhelming the database
+                time.sleep(0.01)
+            
+            pbar.close()
+            
+            # Combine all batches
+            if all_dataframes:
+                print("Combining batches...")
+                df = pd.concat(all_dataframes, ignore_index=True)
             else:
-                query = f"""
-                    SELECT {columns_str}
-                    FROM {self.table_name}
-                    ORDER BY id
-                """
+                df = pd.DataFrame(columns=self.columns)
             
-            print(f"Executing query: {query}")
+            # Dispose of the engine
+            engine.dispose()
             
-            # Load data using pandas
-            df = pd.read_sql_query(query, conn)
+            print(f"Successfully loaded {len(df):,} rows from {self.table_name}")
+            print(f"Data range: {df[self.order_by].min()} to {df[self.order_by].max()}")
             
-            # Close connection
-            conn.close()
-            
-            print(f"Loaded {len(df)} rows from {self.table_name}")
             return df
             
         except Exception as e:
@@ -99,10 +161,11 @@ class HackerNewsDataLoader:
     DataLoader wrapper for HackerNews data with train/test split functionality.
     """
     
-    def __init__(self, connection_params: dict, table_name: str = 'items_by_month',
+    def __init__(self, connection_params: dict, table_name: str = None,
                  columns: list = None, filter_condition: str = None,
                  train_split: float = 0.8, batch_size: int = 32, 
-                 shuffle: bool = True, random_state: int = 42):
+                 shuffle: bool = True, random_state: int = 42,
+                 db_batch_size: int = 10000, order_by: str = 'time'):
         """
         Initialize the HackerNews DataLoader.
         
@@ -115,9 +178,11 @@ class HackerNewsDataLoader:
             batch_size (int): Batch size for DataLoader
             shuffle (bool): Whether to shuffle the data
             random_state (int): Random seed for reproducibility
+            db_batch_size (int): Number of rows to load per database batch (default: 10000)
+            order_by (str): Column to order the data by (default: 'time')
         """
         self.connection_params = connection_params
-        self.table_name = table_name
+        self.table_name = table_name or 'hacker_news.items_by_month'
         self.columns = columns or ['id', 'title', 'score']
         self.filter_condition = filter_condition or """type = 'story'
         AND title IS NOT NULL
@@ -128,6 +193,8 @@ class HackerNewsDataLoader:
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.random_state = random_state
+        self.db_batch_size = db_batch_size
+        self.order_by = order_by
         
         # Set random seed
         torch.manual_seed(random_state)
@@ -137,7 +204,9 @@ class HackerNewsDataLoader:
             connection_params=self.connection_params,
             table_name=self.table_name,
             columns=self.columns,
-            filter_condition=self.filter_condition
+            filter_condition=self.filter_condition,
+            batch_size=self.db_batch_size,
+            order_by=self.order_by
         )
         
         # Create train/test split
@@ -208,7 +277,7 @@ class HackerNewsDataLoader:
         }
 
 
-def create_connection_params(host: str = 'localhost', port: int = 5432, 
+def create_connection_params(host: str = None, port: int = None, 
                            database: str = None, user: str = None, 
                            password: str = None) -> dict:
     """

@@ -10,6 +10,7 @@ from data_loader import HackerNewsDataLoader, create_connection_params
 import os
 import math
 from typing import Dict, Any
+from dotenv import load_dotenv
 
 
 class HackerNewsNet(nn.Module):
@@ -163,26 +164,32 @@ def main():
     """
     Main function demonstrating the complete workflow.
     """
+    # Load environment variables from .env file
+    load_dotenv()
+    
     # Set device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
     
     # Database connection parameters
-    # Replace these with your actual database credentials
-    connection_params = create_connection_params(
-        host=os.getenv('POSTGRES_HOST', 'localhost'),
-        port=int(os.getenv('POSTGRES_PORT', 5432)),
-        database=os.getenv('POSTGRES_DB', 'your_database'),
-        user=os.getenv('POSTGRES_USER', 'your_username'),
-        password=os.getenv('POSTGRES_PASSWORD', 'your_password')
-    )
+    # Get parameters from environment variables
+    connection_params = create_connection_params()
+    
+    # Debug: Print connection info (without password)
+    print(f"Connecting to PostgreSQL:")
+    print(f"  Host: {connection_params['host']}")
+    print(f"  Port: {connection_params['port']}")
+    print(f"  Database: {connection_params['database']}")
+    print(f"  User: {connection_params['user']}")
+    print(f"  Password: {'SET' if connection_params['password'] is not None else 'NOT SET'}")
+    print()
     
     try:
         # Create data loader
         print("Creating data loader...")
         data_loader = HackerNewsDataLoader(
             connection_params=connection_params,
-            table_name='items_by_month',
+            table_name='hacker_news.items_by_month',
             columns=['id', 'title', 'score'],
             filter_condition=None,  # Uses default filter for HackerNews stories
             train_split=0.8,
