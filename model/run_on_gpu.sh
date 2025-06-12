@@ -11,4 +11,4 @@ git clone https://github.com/dhedey/mlx-8-backprop-week-1-hacknews-vote-predicti
 
 cd mlx-8-backprop-week-1-hacknews-vote-predictions
 ~/.local/bin/uv sync
-~/.local/bin/uv run ./model/train.py
+~/.local/bin/uv run ./model/train.py --batch-size 1024
