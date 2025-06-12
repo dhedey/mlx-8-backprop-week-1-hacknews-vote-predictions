@@ -131,7 +131,7 @@ class HackerNewsNet(nn.Module):
             dimensions["title_vocab_size"],
             dimensions["title_embedding_size"],
             _weight=configuration.vocabulary_embeddings,
-            _freeze=True,
+            # _freeze=True,
         )
         self.author_embedding = nn.Embedding(dimensions["authors"], dimensions["author_embedding_size"])
         self.domain_embedding = nn.Embedding(dimensions["domains"], dimensions["domain_embedding_size"])
