@@ -66,9 +66,8 @@ class ModelConfiguration:
 
     def prepare_batch(self, batch):
         # The streaming loader already returns tensors for numeric data and lists for text
-        ids = torch.tensor([id for id in batch['id']], dtype=torch.long)
-        scores = torch.tensor([score for score in batch['score']], dtype=torch.float32)
-        log_scores = torch.log(scores + 1)
+        ids = [id for id in batch['id']]
+        scores = [score for score in batch['score']]
 
         tokenized_titles = [self._tokenize_title(title) for title in batch['title']]
 
@@ -87,8 +86,8 @@ class ModelConfiguration:
         device = self.device
 
         return {
-            'ids': ids.to(device),
-            'log_scores': log_scores.to(device),
+            'ids': torch.tensor(ids, dtype=torch.long).to(device),
+            'log_scores': torch.log(torch.tensor([score for score in batch['score']], dtype=torch.float32) + 1).to(device),
             'features': {
                 'tokenized_titles': tokenized_titles, # These are of different lengths, so can't be a tensor (yet)
                 'author_id': torch.tensor(author_ids, dtype=torch.int).to(device),
@@ -129,6 +128,8 @@ class HackerNewsNet(nn.Module):
         input_feature_length = dimensions["title_embedding_size"] + dimensions["author_embedding_size"] + dimensions["domain_embedding_size"] + dimensions["time_features"]
         hidden_dim_1_size = dimensions["hidden_dim_1_size"]
         hidden_dim_2_size = dimensions["hidden_dim_2_size"]
+
+        self.device = configuration.device
         
         # Layers
         self.fc1 = nn.Linear(input_feature_length, hidden_dim_1_size)
@@ -141,7 +142,7 @@ class HackerNewsNet(nn.Module):
         if len(title) == 0:
             return self.empty_title_embedding
         else:
-            return torch.mean(self.title_embedding(torch.tensor(title)), dim=0)
+            return torch.mean(self.title_embedding(torch.tensor(title).to(self.device)), dim=0)
         
     def forward(self, features):
         # We now create features which should be of dimension (batch, feature_length)
