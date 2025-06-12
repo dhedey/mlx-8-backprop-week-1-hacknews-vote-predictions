@@ -119,7 +119,7 @@ class HackerNewsNet(nn.Module):
             dimensions["title_vocab_size"],
             dimensions["title_embedding_size"],
             _weight=configuration.vocabulary_embeddings,
-            # _freeze=True,
+            _freeze=True,
         )
         self.empty_title_embedding = nn.parameter.Parameter(torch.zeros([dimensions["title_embedding_size"]]))
         self.author_embedding = nn.Embedding(dimensions["authors"], dimensions["author_embedding_size"])
