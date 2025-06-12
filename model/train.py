@@ -261,7 +261,7 @@ def main():
 
     (train_dataset, test_dataset) = torch.utils.data.random_split(
         dataset,
-        [0.8, 0.2],
+        [0.9, 0.1],
         torch.Generator().manual_seed(42)
     )
     print(f"Dataset loaded and split into train: {len(train_dataset)} and test: {len(test_dataset)}")
