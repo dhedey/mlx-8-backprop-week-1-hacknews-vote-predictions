@@ -298,12 +298,12 @@ def main():
         train_loss = train_model_epoch(model, train_loader, criterion, optimizer, batch_preparer)
         test_loss = evaluate_model(model, test_loader, criterion, batch_preparer)
 
-        model_path = 'hackernews_model.pth'
+        model_path = folder + '/hackernews_model.pth'
         torch.save(model.state_dict(), model_path)
         print(f'\nModel saved to {model_path}')
 
     # Save the trained model
-    model_path = 'hackernews_model.pth'
+    model_path = folder + '/hackernews_model.pth'
     torch.save(model.state_dict(), model_path)
     print(f'\nModel saved to {model_path}')
 
