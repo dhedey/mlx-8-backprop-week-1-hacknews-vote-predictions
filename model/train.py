@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 import datasets
 from torch.utils.data import DataLoader
 import datetime
+import argparse
 
 class ModelConfiguration:
     def __init__(self, domain_counts_df, domain_min_count, author_counts_df, author_min_count, device, vocabulary, vocabulary_embeddings):
@@ -251,12 +252,22 @@ def main():
     """
     Main function demonstrating the complete workflow.
     """
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Train HackerNews score prediction model')
+    parser.add_argument('--batch-size', type=int, default=128,
+                        help='Batch size for training and evaluation (default: 128)')
+    parser.add_argument('--epochs', type=int, default=3,
+                        help='Number of training epochs (default: 3)')
+    args = parser.parse_args()
+    
     # Load environment variables from .env file
     load_dotenv()
     
     # Set device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
+    print(f'Batch size: {args.batch_size}')
+    print(f'Epochs: {args.epochs}')
 
     print("Loading dataset...")
     datasets.config.IN_MEMORY_MAX_SIZE = 8 * 1024 * 1024 # 8GB
@@ -274,8 +285,8 @@ def main():
     print(f"Dataset loaded and split into train: {len(train_dataset)} and test: {len(test_dataset)}")
 
     # Get train and test loaders
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=128)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size)
 
     word_vectors = torch.load(folder + '/word_vectors.pt')
 
@@ -307,7 +318,7 @@ def main():
 
     # Training loop
     print('\nStarting training...')
-    num_epochs = 3
+    num_epochs = args.epochs
 
     for epoch in range(num_epochs):
         print(f'\nEpoch {epoch + 1}/{num_epochs}')
