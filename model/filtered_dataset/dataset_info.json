@@ -1,0 +1,70 @@
+{
+  "builder_name": "parquet",
+  "citation": "",
+  "config_name": "default",
+  "dataset_name": "hacker-news-posts",
+  "dataset_size": 616014541,
+  "description": "",
+  "download_checksums": {
+    "hf://datasets/julien040/hacker-news-posts@9e21b0f3c36bd7ce50b741ce966297a7f73cae38/story.parquet": {
+      "num_bytes": 425544090,
+      "checksum": null
+    }
+  },
+  "download_size": 425544090,
+  "features": {
+    "id": {
+      "dtype": "int32",
+      "_type": "Value"
+    },
+    "title": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "url": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "score": {
+      "dtype": "int32",
+      "_type": "Value"
+    },
+    "time": {
+      "dtype": "int32",
+      "_type": "Value"
+    },
+    "comments": {
+      "dtype": "int32",
+      "_type": "Value"
+    },
+    "author": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "domain": {
+      "dtype": "string",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 1041558631,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 616014541,
+      "num_examples": 4010957,
+      "shard_lengths": [
+        3319489,
+        691468
+      ],
+      "dataset_name": "hacker-news-posts"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}

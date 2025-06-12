@@ -6,12 +6,14 @@ This integrates the database data loader with the existing model architecture.
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import pandas as pd
 from streaming_data_loader import HackerNewsStreamingDataLoader, create_connection_params
 import os
 import math
 from typing import Dict, Any
 from dotenv import load_dotenv
-
+import datasets
+from torch.utils.data import DataLoader
 
 class HackerNewsNet(nn.Module):
     """
@@ -94,6 +96,13 @@ def process_batch(batch, device):
     ids = torch.tensor(batch['id'], dtype=torch.long)
     scores = torch.tensor(batch['score'], dtype=torch.float32)
     log_scores = torch.log(scores)
+
+    # "id": d["id"],
+    # "author": d["author"],
+    # "title": title,
+    # "domain": domain,
+    # "time": d["time"],
+    # "score": score,
     
     # TODO: Fix to use embedding
     tokenized_titles = torch.stack([simple_tokenizer(title) for title in batch['title']])
@@ -190,54 +199,36 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
     
-    # Database connection parameters
-    # Get parameters from environment variables
-    connection_params = create_connection_params()
+    # # Database connection parameters
+    # # Get parameters from environment variables
+    # connection_params = create_connection_params()
     
-    # Debug: Print connection info (without password)
-    print(f"Connecting to PostgreSQL:")
-    print(f"  Host: {connection_params['host']}")
-    print(f"  Port: {connection_params['port']}")
-    print(f"  Database: {connection_params['database']}")
-    print(f"  User: {connection_params['user']}")
-    print(f"  Password: {'SET' if connection_params['password'] is not None else 'NOT SET'}")
-    print()
+    # # Debug: Print connection info (without password)
+    # print(f"Connecting to PostgreSQL:")
+    # print(f"  Host: {connection_params['host']}")
+    # print(f"  Port: {connection_params['port']}")
+    # print(f"  Database: {connection_params['database']}")
+    # print(f"  User: {connection_params['user']}")
+    # print(f"  Password: {'SET' if connection_params['password'] is not None else 'NOT SET'}")
+    # print()
     
     try:
-        # Create data loader
-        print("Creating streaming data loader...")
-        data_loader = HackerNewsStreamingDataLoader(
-            connection_params=connection_params,
-            table_name="hacker_news.items",
-            columns=[
-                'id',
-                'title',
-                'score',
-                "to_char(time, 'D') AS day_of_week_num",
-		        "to_char(time, 'HH') AS hour_of_day",
-            ],
-            filter_condition="""
-                type = 'story'
-                AND title IS NOT NULL
-                AND url IS NOT NULL
-                AND score IS NOT NULL AND score >= 1
-                AND (dead IS NULL OR dead = false)
-            """,  # Uses default filter for HackerNews stories
-            train_split=0.8,
-            batch_size=16,
-            shuffle=False,  # Streaming doesn't support shuffle yet
-            db_batch_size=1000
+        print("Loading dataset from huggingface...")
+
+        # Load the filtered dataset
+        dataset = datasets.load_from_disk(os.path.dirname(__file__) + "/filtered_dataset")
+        print(f"Dataset loaded, size: {len(dataset)}")
+
+        (train_dataset, test_dataset) = torch.utils.data.random_split(
+            dataset,
+            [0.8, 0.2],
+            torch.Generator().manual_seed(42)
         )
+        print(f"Dataset loaded and split into train: {len(train_dataset)} and test: {len(test_dataset)}")
         
-        # Get train and test loaders - streaming loader handles batching internally
-        train_loader = data_loader.get_train_loader()
-        test_loader = data_loader.get_test_loader()
-        
-        # Print dataset info
-        info = data_loader.get_data_info()
-        print("\nDataset Info:")
-        for key, value in info.items():
-            print(f"  {key}: {value}")
+        # Get train and test loaders
+        train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+        test_loader = DataLoader(test_dataset)
         
         # Initialize model
         model = HackerNewsNet(

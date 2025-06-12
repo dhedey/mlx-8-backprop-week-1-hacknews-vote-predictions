@@ -206,7 +206,9 @@ class CursorPaginator:
                 query = self._build_cursor_query(cursor_time, cursor_id)
                 
                 with self.engine.connect() as conn:
+                    print(f"📄 Executing query: {query}")
                     df = pd.read_sql_query(query, conn)
+                    print(f"... query complete!")
                 
                 if len(df) == 0:
                     break

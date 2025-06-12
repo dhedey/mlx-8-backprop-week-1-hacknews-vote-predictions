@@ -4,10 +4,6 @@ Install the `uv` package manager.
 
 To avoid an issue when running Jupyter notebook with scipy, you may need to run:
 
-```bash
-uv pip install pip setuptools
-```
-
 Then add your local configuration to a `.env` file:
 ```bash
 POSTGRES_HOST=??
@@ -25,5 +21,5 @@ uv sync --all-packages --dev
 
 Run model training with:
 ```bash
-uv run ./model/train_with_db.py
+uv run ./model/train.py
 ```
