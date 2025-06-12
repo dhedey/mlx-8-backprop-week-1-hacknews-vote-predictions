@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 import datetime
 
 class ModelConfiguration:
-    def __init__(self, domain_counts_df, domain_min_count, author_counts_df, author_min_count, device, word_embeddings: list[tuple[str, list[float]]]):
+    def __init__(self, domain_counts_df, domain_min_count, author_counts_df, author_min_count, device, vocabulary, vocabulary_embeddings):
         self.domain_map = {
             x: i for i, x in enumerate(domain_counts_df[domain_counts_df["count"] >= domain_min_count]["domain"])
         }
@@ -24,8 +24,10 @@ class ModelConfiguration:
             x: i for i, x in enumerate(author_counts_df[author_counts_df["count"] >= author_min_count]["author"])
         }
         self.author_counts_df = author_counts_df
-        self.title_vocab_map = { word[0]: i for i, word in enumerate(word_embeddings) }
-        self.title_embedding_size = len(word_embeddings[0][1])
+        self.vocabulary_embeddings = vocabulary_embeddings.to(device)
+        assert vocabulary_embeddings.shape[0] == len(vocabulary)
+        self.title_vocab_map = { word: i for i, word in enumerate(vocabulary) }
+        self.title_embedding_size = vocabulary_embeddings.shape[1]
         self.device = device
 
     def _tokenize_title(self, title):
@@ -103,10 +105,17 @@ class HackerNewsNet(nn.Module):
     Neural network for HackerNews score prediction.
     """
     
-    def __init__(self, dimensions):
+    def __init__(self, configuration: ModelConfiguration):
         super(HackerNewsNet, self).__init__()
 
-        self.title_embedding = nn.Embedding(dimensions["title_vocab_size"], dimensions["title_embedding_size"])
+        dimensions = configuration.dimensions()
+
+        self.title_embedding = nn.Embedding(
+            dimensions["title_vocab_size"],
+            dimensions["title_embedding_size"],
+            _weight=configuration.vocabulary_embeddings,
+            # _freeze=True,
+        )
         self.empty_title_embedding = nn.parameter.Parameter(torch.zeros([dimensions["title_embedding_size"]]))
         self.author_embedding = nn.Embedding(dimensions["authors"], dimensions["author_embedding_size"])
         self.domain_embedding = nn.Embedding(dimensions["domains"], dimensions["domain_embedding_size"])
@@ -261,31 +270,31 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=128)
 
-    batch_preparer = ModelConfiguration(
+    word_vectors = torch.load(folder + '/word_vectors.pt')
+
+    configuration = ModelConfiguration(
         domain_counts_df=pd.read_csv(folder + '/domain_counts.csv'),
         domain_min_count=4,
         author_counts_df=pd.read_csv(folder + '/author_counts.csv'),
         author_min_count=3,
-        word_embeddings=[
-            ("hello", [0.0, 1.0]),
-            ("world", [1.0, 1.0]),
-        ],
+        vocabulary=word_vectors["vocabulary"],
+        vocabulary_embeddings=word_vectors["embeddings"],
         device=device,
     )
 
-    # Example: Show some sample data
-    print("\nA small sample batch:")
-    sample_loader = DataLoader(train_dataset, batch_size=2)
-    for raw_batch in sample_loader:
-        pprint(raw_batch)
-        batch = batch_preparer.prepare_batch(raw_batch)
-        pprint(batch)
-        break
+    print("Configuration:")
+    pprint(configuration.dimensions())
+
+    # print("\nA small sample batch:")
+    # sample_loader = DataLoader(train_dataset, batch_size=2)
+    # for raw_batch in sample_loader:
+    #     pprint(raw_batch)
+    #     batch = configuration.prepare_batch(raw_batch)
+    #     pprint(batch)
+    #     break
 
     # Initialize model
-    model = HackerNewsNet(
-        dimensions=batch_preparer.dimensions(),
-    ).to(device)
+    model = HackerNewsNet(configuration).to(device)
     criterion = nn.MSELoss()  # MSE loss for predicting log scores
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
@@ -295,8 +304,8 @@ def main():
 
     for epoch in range(num_epochs):
         print(f'\nEpoch {epoch + 1}/{num_epochs}')
-        train_loss = train_model_epoch(model, train_loader, criterion, optimizer, batch_preparer)
-        test_loss = evaluate_model(model, test_loader, criterion, batch_preparer)
+        train_loss = train_model_epoch(model, train_loader, criterion, optimizer, configuration)
+        test_loss = evaluate_model(model, test_loader, criterion, configuration)
 
         model_path = folder + '/hackernews_model.pth'
         torch.save(model.state_dict(), model_path)
