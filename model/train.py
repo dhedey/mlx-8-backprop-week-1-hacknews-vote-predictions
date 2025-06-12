@@ -8,17 +8,14 @@ import torch.nn as nn
 import torch.optim as optim
 import re
 import pandas as pd
-from streaming_data_loader import HackerNewsStreamingDataLoader, create_connection_params
+from pprint import pprint
 import os
-import math
-from typing import Dict, Any
 from dotenv import load_dotenv
 import datasets
 from torch.utils.data import DataLoader
 import datetime
 
-
-class BatchPreparer:
+class ModelConfiguration:
     def __init__(self, domain_counts_df, domain_min_count, author_counts_df, author_min_count, device, word_embeddings: list[tuple[str, list[float]]]):
         self.domain_map = {
             x: i for i, x in enumerate(domain_counts_df[domain_counts_df["count"] >= domain_min_count]["domain"])
@@ -77,8 +74,8 @@ class BatchPreparer:
         domain_ids = [self._map_domain_id(domain) for domain in batch['domain']]
 
         timestamps = [datetime.datetime.fromtimestamp(time, datetime.UTC) for time in batch['time']]
-        year = [date.year - 2010 for date in timestamps]
-        day_of_week = [date.weekday() - 2010 for date in timestamps]
+        year = [date.year - 2000 for date in timestamps]
+        day_of_week = [date.weekday() for date in timestamps]
         hour_of_day = [date.hour for date in timestamps]
 
         device = self.device
@@ -164,8 +161,9 @@ def train_model_epoch(model, data_loader, criterion, optimizer, preparer):
     Train the model for one epoch.
     """
     model.train()
-    print_every = 1000
     running_loss = 0.0
+    print_running_loss = 0.0
+    print_every = 100
 
     total_batches = len(data_loader)
 
@@ -180,13 +178,12 @@ def train_model_epoch(model, data_loader, criterion, optimizer, preparer):
         optimizer.step()
         
         running_loss += loss.item()
-        total_batches += 1
+        print_running_loss += loss.item()
 
         batch_num = batch_idx + 1
         if batch_num % print_every == 0:
-            avg_loss = running_loss / print_every
-            print(f'Batch: {batch_num} of {total_batches}, Recent loss: {avg_loss:.4f}')
-            running_loss = 0.0
+            print(f'Batch: {batch_num} of {total_batches}, Recent loss: {print_running_loss / print_every:.4f}')
+            print_running_loss = 0.0
     
     return running_loss / total_batches if total_batches > 0 else 0.0
 
@@ -225,8 +222,8 @@ def evaluate_model(model, data_loader, criterion, preparer):
     actual_log_scores = torch.tensor(actual_log_scores)
     
     # Convert back to actual scores for interpretability
-    predicted_scores = torch.exp(predictions)
-    actual_scores = torch.exp(actual_log_scores)
+    predicted_scores = torch.exp(predictions) - 1
+    actual_scores = torch.exp(actual_log_scores) - 1
     
     print(f'Test Loss (MSE on log scores): {avg_loss:.4f}')
     print(f'Mean predicted log score: {predictions.mean():.4f} (score: {predicted_scores.mean():.2f})')
@@ -261,10 +258,10 @@ def main():
     print(f"Dataset loaded and split into train: {len(train_dataset)} and test: {len(test_dataset)}")
 
     # Get train and test loaders
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-    test_loader = DataLoader(test_dataset)
+    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=128)
 
-    batch_preparer = BatchPreparer(
+    batch_preparer = ModelConfiguration(
         domain_counts_df=pd.read_csv(folder + '/domain_counts.csv'),
         domain_min_count=4,
         author_counts_df=pd.read_csv(folder + '/author_counts.csv'),
@@ -275,6 +272,15 @@ def main():
         ],
         device=device,
     )
+
+    # Example: Show some sample data
+    print("\nA small sample batch:")
+    sample_loader = DataLoader(train_dataset, batch_size=2)
+    for raw_batch in sample_loader:
+        pprint(raw_batch)
+        batch = batch_preparer.prepare_batch(raw_batch)
+        pprint(batch)
+        break
 
     # Initialize model
     model = HackerNewsNet(
@@ -300,18 +306,6 @@ def main():
     model_path = 'hackernews_model.pth'
     torch.save(model.state_dict(), model_path)
     print(f'\nModel saved to {model_path}')
-
-    # Example: Show some sample data
-    print("\nSample data from first batch:")
-    for raw_batch in train_loader:
-        batch = batch_preparer.prepare_batch(raw_batch)
-        print(f"Batch size: {len(batch['ids'])}")
-        print(f"Sample IDs: {batch['ids'][:3].tolist()}")
-        print(f"Sample titles: {batch['title_texts'][:2]}")
-        print(f"Sample scores: {batch['scores'][:3].tolist()}")
-        print(f"Sample log scores: {batch['log_scores'][:3].tolist()}")
-        print(f"Tokenized shape: {batch['titles'].shape}")
-        break
 
 
 if __name__ == '__main__':
