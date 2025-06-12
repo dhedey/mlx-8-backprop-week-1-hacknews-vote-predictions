@@ -56,10 +56,10 @@ class ModelConfiguration:
             "title_vocab_size": len(self.title_vocab_map),
             "title_embedding_size": self.title_embedding_size,
             "authors": len(self.author_map) + 1, # Include unknown
-            "author_embedding_size": 10,
+            "author_embedding_size": 16,
             "domains": len(self.domain_map) + 1,
-            "domain_embedding_size": 10,
-            "time_features": 3, # year, day of week, hour of day
+            "domain_embedding_size": 16,
+            "time_features": 5, # year, day of week cos/sin, hour of day cos/sin
             "hidden_dim_1_size": 256,
             "hidden_dim_2_size": 512,
         }
@@ -78,7 +78,11 @@ class ModelConfiguration:
         timestamps = [datetime.datetime.fromtimestamp(time, datetime.UTC) for time in batch['time']]
         year = [date.year - 2000 for date in timestamps]
         day_of_week = [date.weekday() for date in timestamps]
-        hour_of_day = [date.hour for date in timestamps]
+        import math
+        day_of_week_cos = [math.cos(2 * math.pi * date.weekday()/7) for date in timestamps]
+        day_of_week_sin = [math.sin(2 * math.pi * date.weekday()/7) for date in timestamps]
+        hour_of_day_cos = [math.cos(2 * math.pi * date.hour / 24) for date in timestamps]
+        hour_of_day_sin = [math.sin(2 * math.pi * date.hour / 24) for date in timestamps]
 
         device = self.device
 
@@ -92,8 +96,10 @@ class ModelConfiguration:
                 'time': torch.stack(
                     [
                         torch.tensor(year, dtype=torch.int).to(device),
-                        torch.tensor(day_of_week, dtype=torch.int).to(device),
-                        torch.tensor(hour_of_day, dtype=torch.int).to(device),
+                        torch.tensor(day_of_week_cos, dtype=torch.int).to(device),
+                        torch.tensor(day_of_week_sin, dtype=torch.int).to(device),
+                        torch.tensor(hour_of_day_cos, dtype=torch.int).to(device),
+                        torch.tensor(hour_of_day_sin, dtype=torch.int).to(device),
                     ],
                     dim=1,
                 ).to(device),
