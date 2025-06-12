@@ -218,7 +218,7 @@ def evaluate_model(model, data_loader, criterion, preparer):
     model.eval()
     total_loss = 0.0
     total_batches = 0
-    predictions = []
+    predicted_log_scores = []
     actual_log_scores = []
 
     print("Evaluating on test data...")
@@ -235,22 +235,24 @@ def evaluate_model(model, data_loader, criterion, preparer):
             total_batches += 1
             
             # Store predictions for analysis
-            predictions.extend(outputs.cpu().numpy().flatten())
+            predicted_log_scores.extend(outputs.cpu().numpy().flatten())
             actual_log_scores.extend(log_scores.cpu().numpy().flatten())
     
     avg_loss = total_loss / total_batches if total_batches > 0 else 0.0
     
     # Calculate some statistics
-    predictions = torch.tensor(predictions)
+    predicted_log_scores = torch.tensor(predicted_log_scores)
     actual_log_scores = torch.tensor(actual_log_scores)
     
     # Convert back to actual scores for interpretability
-    predicted_scores = torch.exp(predictions) - 1
-    actual_scores = torch.exp(actual_log_scores) - 1
+    predicted_raw_scores = torch.exp(predicted_log_scores) - 1
+    actual_raw_scores = torch.exp(actual_log_scores) - 1
     
     print(f'Test Loss (MSE on log scores): {avg_loss:.4f}')
-    print(f'Mean predicted log score: {predictions.mean():.4f} (score: {predicted_scores.mean():.2f})')
-    print(f'Mean actual log score: {actual_log_scores.mean():.4f} (score: {actual_scores.mean():.2f})')
+    print(f'Mean predicted log score: {predicted_log_scores.mean():.4f} (std: {predicted_log_scores.std():.4f})')
+    print(f'Mean actual    log score: {actual_log_scores.mean():.4f} (std: {actual_log_scores.std():.4f})')
+    print(f'Mean predicted raw score {predicted_raw_scores.mean():.2f} (std: {predicted_raw_scores.std():.4f})')
+    print(f'Mean actual    raw score: {actual_raw_scores.mean():.4f} (std: {actual_raw_scores.std():.4f})')
     
     return avg_loss
 
@@ -264,6 +266,8 @@ def main():
                         help='Batch size for training and evaluation (default: 128)')
     parser.add_argument('--epochs', type=int, default=3,
                         help='Number of training epochs (default: 3)')
+    parser.add_argument('--continue', type=bool, default=False,
+        help='Whether to keep training from a saved model (default: False)')
     args = parser.parse_args()
     
     # Load environment variables from .env file
@@ -271,9 +275,11 @@ def main():
     
     # Set device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    continue_model = getattr(args, "continue")
     print(f'Using device: {device}')
     print(f'Batch size: {args.batch_size}')
     print(f'Epochs: {args.epochs}')
+    print(f'Continue from existing model: {continue_model}')
 
     print("Loading dataset...")
     datasets.config.IN_MEMORY_MAX_SIZE = 8 * 1024 * 1024 # 8GB
@@ -317,28 +323,39 @@ def main():
     #     pprint(batch)
     #     break
 
+    model_path = folder + '/hackernews_model.pth'
+
     # Initialize model
     model = HackerNewsNet(configuration).to(device)
-    criterion = nn.MSELoss()  # MSE loss for predicting log scores
+
     optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+    if continue_model:
+        print(f"Loading model and optimizer state from {model_path}...")
+        loaded_data = torch.load(model_path)
+        optimizer.load_state_dict(loaded_data['optimizer'])
+        model.load_state_dict(loaded_data["model"])
+        start_epoch = loaded_data['epoch']
+    else:
+        start_epoch = 1
+
+    criterion = nn.MSELoss()  # MSE loss for predicting log scores
 
     # Training loop
     print('\nStarting training...')
     num_epochs = args.epochs
 
-    for epoch in range(num_epochs):
-        print(f'\nEpoch {epoch + 1}/{num_epochs}')
+    for epoch in range(start_epoch, num_epochs + 1):
+        print(f'\nEpoch {epoch}/{num_epochs}')
         train_loss = train_model_epoch(model, train_loader, criterion, optimizer, configuration)
         test_loss = evaluate_model(model, test_loader, criterion, configuration)
 
-        model_path = folder + '/hackernews_model.pth'
-        torch.save(model.state_dict(), model_path)
-        print(f'\nModel saved to {model_path}')
-
-    # Save the trained model
-    model_path = folder + '/hackernews_model.pth'
-    torch.save(model.state_dict(), model_path)
-    print(f'\nModel saved to {model_path}')
+        torch.save({
+            epoch: epoch,
+            model: model.state_dict(),
+            optimizer: optimizer.state_dict(),
+        }, model_path)
+        print(f'\nModel checkpointed to {model_path}')
 
 
 if __name__ == '__main__':
