@@ -6,6 +6,7 @@ This integrates the database data loader with the existing model architecture.
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import re
 import pandas as pd
 from streaming_data_loader import HackerNewsStreamingDataLoader, create_connection_params
 import os
@@ -14,22 +15,108 @@ from typing import Dict, Any
 from dotenv import load_dotenv
 import datasets
 from torch.utils.data import DataLoader
+import datetime
+
+
+class BatchPreparer:
+    def __init__(self, domain_counts_df, domain_min_count, author_counts_df, author_min_count, device, word_embeddings: list[tuple[str, list[float]]]):
+        self.domain_map = {
+            x: i for i, x in enumerate(domain_counts_df[domain_counts_df["count"] >= domain_min_count]["domain"])
+        }
+        self.author_map = {
+            x: i for i, x in enumerate(author_counts_df[author_counts_df["count"] >= author_min_count]["author"])
+        }
+        self.author_counts_df = author_counts_df
+        self.title_vocab_map = { word[0]: i for i, word in enumerate(word_embeddings) }
+        self.title_embedding_size = len(word_embeddings[0][1])
+        self.device = device
+
+    def _tokenize_title(self, title):
+        filtered_title = re.sub(r'[^a-z0-9 ]', '', title.lower())
+        tokens = []
+        for word in filtered_title.split():
+            if word in self.title_vocab_map:
+                tokens.append(self.title_vocab_map[word])
+
+        return tokens
+
+    def _map_author_id(self, author):
+        if author in self.author_map:
+            return self.author_map[author]
+        else:
+            return len(self.author_map) # Unknown
+
+    def _map_domain_id(self, domain):
+        if domain in self.domain_map:
+            return self.domain_map[domain]
+        else:
+            return len(self.domain_map)  # Unknown
+
+    def dimensions(self):
+        return {
+            "title_vocab_size": len(self.title_vocab_map),
+            "title_embedding_size": self.title_embedding_size,
+            "authors": len(self.author_map) + 1, # Include unknown
+            "author_embedding_size": 10,
+            "domains": len(self.domain_map) + 1,
+            "domain_embedding_size": 10,
+            "time_features": 3, # year, day of week, hour of day
+            "hidden_dim_1_size": 256,
+            "hidden_dim_2_size": 512,
+        }
+
+    def prepare_batch(self, batch):
+        # The streaming loader already returns tensors for numeric data and lists for text
+        ids = torch.tensor([id for id in batch['id']], dtype=torch.long)
+        scores = torch.tensor([score for score in batch['score']], dtype=torch.float32)
+        log_scores = torch.log(scores + 1)
+
+        tokenized_titles = [self._tokenize_title(title) for title in batch['title']]
+
+        author_ids = [self._map_author_id(author) for author in batch['author']]
+        domain_ids = [self._map_domain_id(domain) for domain in batch['domain']]
+
+        timestamps = [datetime.datetime.fromtimestamp(time, datetime.UTC) for time in batch['time']]
+        year = [date.year - 2010 for date in timestamps]
+        day_of_week = [date.weekday() - 2010 for date in timestamps]
+        hour_of_day = [date.hour for date in timestamps]
+
+        device = self.device
+
+        return {
+            'ids': ids.to(device),
+            'log_scores': log_scores.to(device),
+            'features': {
+                'tokenized_titles': tokenized_titles, # These are of different lengths, so can't be a tensor (yet)
+                'author_id': torch.tensor(author_ids, dtype=torch.int).to(device),
+                'domain_id': torch.tensor(domain_ids, dtype=torch.int).to(device),
+                'time': torch.stack(
+                    [
+                        torch.tensor(year, dtype=torch.int).to(device),
+                        torch.tensor(day_of_week, dtype=torch.int).to(device),
+                        torch.tensor(hour_of_day, dtype=torch.int).to(device),
+                    ],
+                    dim=1,
+                ).to(device),
+            }
+        }
 
 class HackerNewsNet(nn.Module):
     """
     Neural network for HackerNews score prediction.
     """
     
-    def __init__(self, vocab_size: int = 10000, embedding_dim: int = 128, 
-                 hidden_dim: int = 256):
+    def __init__(self, dimensions):
         super(HackerNewsNet, self).__init__()
 
-        # TODO: Initialize from word2vec embeddings
-        self.title_embedding = nn.Embedding(vocab_size, embedding_dim)
+        self.title_embedding = nn.Embedding(dimensions["title_vocab_size"], dimensions["title_embedding_size"])
+        self.empty_title_embedding = nn.parameter.Parameter(torch.zeros([dimensions["title_embedding_size"]]))
+        self.author_embedding = nn.Embedding(dimensions["authors"], dimensions["author_embedding_size"])
+        self.domain_embedding = nn.Embedding(dimensions["domains"], dimensions["domain_embedding_size"])
 
-        input_feature_length = embedding_dim + 2  # Title embeddings + day of week + hour of day
-        hidden_dim_1_size = hidden_dim
-        hidden_dim_2_size = hidden_dim // 2
+        input_feature_length = dimensions["title_embedding_size"] + dimensions["author_embedding_size"] + dimensions["domain_embedding_size"] + dimensions["time_features"]
+        hidden_dim_1_size = dimensions["hidden_dim_1_size"]
+        hidden_dim_2_size = dimensions["hidden_dim_2_size"]
         
         # Layers
         self.fc1 = nn.Linear(input_feature_length, hidden_dim_1_size)
@@ -37,23 +124,26 @@ class HackerNewsNet(nn.Module):
         self.dropout = nn.Dropout(0.2)
         self.fc2 = nn.Linear(hidden_dim_1_size, hidden_dim_2_size)
         self.fc3 = nn.Linear(hidden_dim_2_size, 1)
+
+    def _map_title(self, title):
+        if len(title) == 0:
+            return self.empty_title_embedding
+        else:
+            return torch.mean(self.title_embedding(torch.tensor(title)), dim=0)
         
     def forward(self, features):
-        tokenized_titles = features['tokenized_titles'] # Batch-length list of tokenized titles
-        title_token_embeddings = self.title_embedding(tokenized_titles) # (batch, title_length, embedding_dim)
+        # We now create features which should be of dimension (batch, feature_length)
+        title_features = torch.stack([self._map_title(title) for title in features['tokenized_titles']]) # (batch, embedding_dim)
+        time_features = features['time']
+        domain_features = self.domain_embedding(features['domain_id'])
+        author_features = self.author_embedding(features['author_id'])
 
-        # We now create features which we will concatenate together (along dimension 1)
-
-        # >> Create a naive list of title features by averaging the embedding of every token in the title
-        title_features = torch.mean(title_token_embeddings, dim=1)               # (batch, embedding_dim)
-        day_of_week_features = features['day_of_week_num'].unsqueeze(1).float()  # (batch, 1)
-        hour_of_day_features = features['hour_of_day'].unsqueeze(1).float()      # (batch, 1)
-
-        x = torch.cat(
+        x = torch.cat( # Concatenate along the feature dimension
             [
                 title_features,
-                day_of_week_features,
-                hour_of_day_features,
+                domain_features,
+                author_features,
+                time_features,
             ],
             dim=1,
         )
@@ -69,66 +159,19 @@ class HackerNewsNet(nn.Module):
         return torch.squeeze(x, dim=1)  # The final dimension is size 1 - flatten it / remove it
 
 
-def simple_tokenizer(text: str, vocab_size: int = 10000) -> torch.Tensor:
-    """
-    Simple tokenizer that converts text to tensor of indices.
-    In a real implementation, you'd use a proper tokenizer.
-    """
-    # This is a placeholder - replace with actual tokenization
-    words = text.lower().split()[:20]  # Limit to 20 words
-    # Simple hash-based tokenization (not recommended for production)
-    indices = [hash(word) % vocab_size for word in words]
-    
-    # Pad or truncate to fixed length
-    seq_length = 20
-    if len(indices) < seq_length:
-        indices.extend([0] * (seq_length - len(indices)))
-    else:
-        indices = indices[:seq_length]
-        
-    return torch.tensor(indices, dtype=torch.long)
-
-def process_batch(batch, device):
-    """
-    Process batch data from streaming data loader.
-    """
-    # The streaming loader already returns tensors for numeric data and lists for text
-    ids = torch.tensor(batch['id'], dtype=torch.long)
-    scores = torch.tensor(batch['score'], dtype=torch.float32)
-    log_scores = torch.log(scores)
-
-    # "id": d["id"],
-    # "author": d["author"],
-    # "title": title,
-    # "domain": domain,
-    # "time": d["time"],
-    # "score": score,
-    
-    # TODO: Fix to use embedding
-    tokenized_titles = torch.stack([simple_tokenizer(title) for title in batch['title']])
-
-    return {
-        'ids': ids.to(device),
-        'log_scores': log_scores.to(device),
-        'features': {
-            'tokenized_titles': tokenized_titles.to(device),
-            'day_of_week_num': torch.tensor([int(x) for x in batch['day_of_week_num']], dtype=torch.int).to(device),
-            'hour_of_day': torch.tensor([int(x) for x in batch['hour_of_day']], dtype=torch.int).to(device),
-        }
-    }
-
-
-def train_model_epoch(model, data_loader, criterion, optimizer, device):
+def train_model_epoch(model, data_loader, criterion, optimizer, preparer):
     """
     Train the model for one epoch.
     """
     model.train()
+    print_every = 1000
     running_loss = 0.0
-    total_batches = 0
-    
+
+    total_batches = len(data_loader)
+
     for batch_idx, raw_batch in enumerate(data_loader):
         # Process the batch
-        batch = process_batch(raw_batch, device)
+        batch = preparer.prepare_batch(raw_batch)
         
         optimizer.zero_grad()
         outputs = model(batch['features'])
@@ -138,16 +181,17 @@ def train_model_epoch(model, data_loader, criterion, optimizer, device):
         
         running_loss += loss.item()
         total_batches += 1
-        
-        if batch_idx % 10 == 9:
-            avg_loss = running_loss / 10
-            print(f'Batch: {batch_idx + 1}, Loss: {avg_loss:.4f}')
+
+        batch_num = batch_idx + 1
+        if batch_num % print_every == 0:
+            avg_loss = running_loss / print_every
+            print(f'Batch: {batch_num} of {total_batches}, Recent loss: {avg_loss:.4f}')
             running_loss = 0.0
     
     return running_loss / total_batches if total_batches > 0 else 0.0
 
 
-def evaluate_model(model, data_loader, criterion, device):
+def evaluate_model(model, data_loader, criterion, preparer):
     """
     Evaluate the model on test data.
     """
@@ -156,11 +200,14 @@ def evaluate_model(model, data_loader, criterion, device):
     total_batches = 0
     predictions = []
     actual_log_scores = []
-    
+
+    print("Evaluating on test data...")
+
     with torch.no_grad():
         for raw_batch in data_loader:
             # Process the batch
-            batch = process_batch(raw_batch, device)
+            batch = preparer.prepare_batch(raw_batch)
+            log_scores = batch['log_scores']
             
             outputs = model(batch['features'])
             loss = criterion(outputs, batch['log_scores'])
@@ -187,7 +234,6 @@ def evaluate_model(model, data_loader, criterion, device):
     
     return avg_loss
 
-
 def main():
     """
     Main function demonstrating the complete workflow.
@@ -198,82 +244,74 @@ def main():
     # Set device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
-    
-    # # Database connection parameters
-    # # Get parameters from environment variables
-    # connection_params = create_connection_params()
-    
-    # # Debug: Print connection info (without password)
-    # print(f"Connecting to PostgreSQL:")
-    # print(f"  Host: {connection_params['host']}")
-    # print(f"  Port: {connection_params['port']}")
-    # print(f"  Database: {connection_params['database']}")
-    # print(f"  User: {connection_params['user']}")
-    # print(f"  Password: {'SET' if connection_params['password'] is not None else 'NOT SET'}")
-    # print()
-    
-    try:
-        print("Loading dataset from huggingface...")
 
-        # Load the filtered dataset
-        dataset = datasets.load_from_disk(os.path.dirname(__file__) + "/filtered_dataset")
-        print(f"Dataset loaded, size: {len(dataset)}")
+    print("Loading dataset...")
+    datasets.config.IN_MEMORY_MAX_SIZE = 8 * 1024 * 1024 # 8GB
 
-        (train_dataset, test_dataset) = torch.utils.data.random_split(
-            dataset,
-            [0.8, 0.2],
-            torch.Generator().manual_seed(42)
-        )
-        print(f"Dataset loaded and split into train: {len(train_dataset)} and test: {len(test_dataset)}")
-        
-        # Get train and test loaders
-        train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-        test_loader = DataLoader(test_dataset)
-        
-        # Initialize model
-        model = HackerNewsNet(
-            vocab_size=10000,
-            embedding_dim=128,
-        ).to(device)
-        criterion = nn.MSELoss()  # MSE loss for predicting log scores
-        optimizer = optim.Adam(model.parameters(), lr=0.001)
-        
-        # Training loop
-        print('\nStarting training...')
-        num_epochs = 3
-        
-        for epoch in range(num_epochs):
-            print(f'\nEpoch {epoch + 1}/{num_epochs}')
-            train_loss = train_model_epoch(model, train_loader, criterion, optimizer, device)
-            test_loss = evaluate_model(model, test_loader, criterion, device)
-            
-        # Save the trained model
+    # Load the filtered dataset
+    folder = os.path.dirname(__file__)
+    dataset = datasets.load_from_disk(folder + "/filtered_dataset")
+    print(f"Dataset loaded, size: {len(dataset)}")
+
+    (train_dataset, test_dataset) = torch.utils.data.random_split(
+        dataset,
+        [0.8, 0.2],
+        torch.Generator().manual_seed(42)
+    )
+    print(f"Dataset loaded and split into train: {len(train_dataset)} and test: {len(test_dataset)}")
+
+    # Get train and test loaders
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    test_loader = DataLoader(test_dataset)
+
+    batch_preparer = BatchPreparer(
+        domain_counts_df=pd.read_csv(folder + '/domain_counts.csv'),
+        domain_min_count=4,
+        author_counts_df=pd.read_csv(folder + '/author_counts.csv'),
+        author_min_count=3,
+        word_embeddings=[
+            ("hello", [0.0, 1.0]),
+            ("world", [1.0, 1.0]),
+        ],
+        device=device,
+    )
+
+    # Initialize model
+    model = HackerNewsNet(
+        dimensions=batch_preparer.dimensions(),
+    ).to(device)
+    criterion = nn.MSELoss()  # MSE loss for predicting log scores
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+    # Training loop
+    print('\nStarting training...')
+    num_epochs = 3
+
+    for epoch in range(num_epochs):
+        print(f'\nEpoch {epoch + 1}/{num_epochs}')
+        train_loss = train_model_epoch(model, train_loader, criterion, optimizer, batch_preparer)
+        test_loss = evaluate_model(model, test_loader, criterion, batch_preparer)
+
         model_path = 'hackernews_model.pth'
         torch.save(model.state_dict(), model_path)
         print(f'\nModel saved to {model_path}')
-        
-        # Example: Show some sample data
-        print("\nSample data from first batch:")
-        for raw_batch in train_loader:
-            batch = process_batch(raw_batch)
-            print(f"Batch size: {len(batch['ids'])}")
-            print(f"Sample IDs: {batch['ids'][:3].tolist()}")
-            print(f"Sample titles: {batch['title_texts'][:2]}")
-            print(f"Sample scores: {batch['scores'][:3].tolist()}")
-            print(f"Sample log scores: {batch['log_scores'][:3].tolist()}")
-            print(f"Tokenized shape: {batch['titles'].shape}")
-            break
-            
-        # Clean up database connections
-        data_loader.close()
-            
-    except Exception as e:
-        print(f"Error: {e}")
-        print("\nMake sure to:")
-        print("1. Set up your PostgreSQL database connection parameters")
-        print("2. Ensure the 'items_by_month' table exists")
-        print("3. Install required dependencies with uv")
-        raise e
+
+    # Save the trained model
+    model_path = 'hackernews_model.pth'
+    torch.save(model.state_dict(), model_path)
+    print(f'\nModel saved to {model_path}')
+
+    # Example: Show some sample data
+    print("\nSample data from first batch:")
+    for raw_batch in train_loader:
+        batch = batch_preparer.prepare_batch(raw_batch)
+        print(f"Batch size: {len(batch['ids'])}")
+        print(f"Sample IDs: {batch['ids'][:3].tolist()}")
+        print(f"Sample titles: {batch['title_texts'][:2]}")
+        print(f"Sample scores: {batch['scores'][:3].tolist()}")
+        print(f"Sample log scores: {batch['log_scores'][:3].tolist()}")
+        print(f"Tokenized shape: {batch['titles'].shape}")
+        break
 
 
 if __name__ == '__main__':
