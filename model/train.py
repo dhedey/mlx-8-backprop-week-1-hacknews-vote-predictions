@@ -25,18 +25,28 @@ class ModelConfiguration:
             x: i for i, x in enumerate(author_counts_df[author_counts_df["count"] >= author_min_count]["author"])
         }
         self.author_counts_df = author_counts_df
-        self.vocabulary_embeddings = vocabulary_embeddings.to(device)
+        self.vocabulary_embeddings = torch.cat([
+            vocabulary_embeddings,
+            torch.zeros((1, vocabulary_embeddings.shape[1]), dtype=torch.float32)  # Placeholder for unknown words
+        ]).to(device)
         assert vocabulary_embeddings.shape[0] == len(vocabulary)
         self.title_vocab_map = { word: i for i, word in enumerate(vocabulary) }
         self.title_embedding_size = vocabulary_embeddings.shape[1]
+        self.title_token_length = 20
         self.device = device
 
     def _tokenize_title(self, title):
-        filtered_title = re.sub(r'[^a-z0-9 ]', '', title.lower())
-        tokens = []
-        for word in filtered_title.split():
+        filtered_title_words = re.sub(r'[^a-z0-9 ]', '', title.lower()).split()
+        token_placeholder = len(self.title_vocab_map) # Placeholder
+        tokens = [token_placeholder] * self.title_token_length  # Initialize with placeholder tokens
+
+        i = 0
+        for word in filtered_title_words:
             if word in self.title_vocab_map:
-                tokens.append(self.title_vocab_map[word])
+                tokens[i] = self.title_vocab_map[word]
+                i += 1
+                if i >= self.title_token_length:
+                    break
 
         return tokens
 
@@ -54,8 +64,9 @@ class ModelConfiguration:
 
     def dimensions(self):
         return {
-            "title_vocab_size": len(self.title_vocab_map),
+            "title_vocab_size": len(self.title_vocab_map) + 1, # Include placeholder
             "title_embedding_size": self.title_embedding_size,
+            "title_token_length": self.title_token_length, # Anything more than this will be truncated, or padded
             "authors": len(self.author_map) + 1, # Include unknown
             "author_embedding_size": 16,
             "domains": len(self.domain_map) + 1,
@@ -90,7 +101,7 @@ class ModelConfiguration:
             'ids': torch.tensor(ids, dtype=torch.long).to(device),
             'log_scores': torch.log(torch.tensor([score for score in batch['score']], dtype=torch.float32) + 1).to(device),
             'features': {
-                'tokenized_titles': tokenized_titles, # These are of different lengths, so can't be a tensor (yet)
+                'tokenized_titles': torch.tensor(tokenized_titles, dtype=torch.int).to(device),
                 'author_id': torch.tensor(author_ids, dtype=torch.int).to(device),
                 'domain_id': torch.tensor(domain_ids, dtype=torch.int).to(device),
                 'time': torch.stack(
@@ -122,7 +133,6 @@ class HackerNewsNet(nn.Module):
             _weight=configuration.vocabulary_embeddings,
             _freeze=True,
         )
-        self.empty_title_embedding = nn.parameter.Parameter(torch.zeros([dimensions["title_embedding_size"]]))
         self.author_embedding = nn.Embedding(dimensions["authors"], dimensions["author_embedding_size"])
         self.domain_embedding = nn.Embedding(dimensions["domains"], dimensions["domain_embedding_size"])
 
@@ -138,16 +148,12 @@ class HackerNewsNet(nn.Module):
         self.dropout = nn.Dropout(0.2)
         self.fc2 = nn.Linear(hidden_dim_1_size, hidden_dim_2_size)
         self.fc3 = nn.Linear(hidden_dim_2_size, 1)
-
-    def _map_title(self, title):
-        if len(title) == 0:
-            return self.empty_title_embedding
-        else:
-            return torch.mean(self.title_embedding(torch.tensor(title).to(self.device)), dim=0)
         
     def forward(self, features):
+        embedded_title_tokens = self.title_embedding(features['tokenized_titles']) # (batch, title_length, embedding_dim)
+
         # We now create features which should be of dimension (batch, feature_length)
-        title_features = torch.stack([self._map_title(title) for title in features['tokenized_titles']]) # (batch, embedding_dim)
+        title_features = torch.mean(embedded_title_tokens, dim=1)
         time_features = features['time']
         domain_features = self.domain_embedding(features['domain_id'])
         author_features = self.author_embedding(features['author_id'])
