@@ -15,9 +15,47 @@ import datasets
 from torch.utils.data import DataLoader
 import datetime
 import argparse
+import wandb
+from dataclasses import dataclass
+
+
+@dataclass
+class ModelRunSettings:
+    """
+    Encapsulates all hyperparameters and settings for model training.
+    """
+    batch_size: int = 128
+    epochs: int = 3
+    learning_rate: float = 0.001
+    dropout: float = 0.2
+    hidden_dim_1: int = 256
+    hidden_dim_2: int = 512
+    continue_model: bool = False
+    
+    def to_dict(self):
+        """Convert to dictionary for wandb logging."""
+        return {
+            'batch_size': self.batch_size,
+            'epochs': self.epochs,
+            'learning_rate': self.learning_rate,
+            'dropout': self.dropout,
+            'hidden_dim_1': self.hidden_dim_1,
+            'hidden_dim_2': self.hidden_dim_2,
+            'continue_model': self.continue_model
+        }
+    
+    def print_settings(self):
+        """Print current settings."""
+        print(f'Batch size: {self.batch_size}')
+        print(f'Epochs: {self.epochs}')
+        print(f'Learning rate: {self.learning_rate}')
+        print(f'Dropout: {self.dropout}')
+        print(f'Hidden dimensions: {self.hidden_dim_1}, {self.hidden_dim_2}')
+        print(f'Continue from existing model: {self.continue_model}')
+
 
 class ModelConfiguration:
-    def __init__(self, domain_counts_df, domain_min_count, author_counts_df, author_min_count, device, vocabulary, vocabulary_embeddings):
+    def __init__(self, domain_counts_df, domain_min_count, author_counts_df, author_min_count, device, vocabulary, vocabulary_embeddings, hidden_dim_1=256, hidden_dim_2=512, dropout=0.2):
         self.domain_map = {
             x: i for i, x in enumerate(domain_counts_df[domain_counts_df["count"] >= domain_min_count]["domain"])
         }
@@ -34,6 +72,9 @@ class ModelConfiguration:
         self.title_embedding_size = vocabulary_embeddings.shape[1]
         self.title_token_length = 20
         self.device = device
+        self.hidden_dim_1 = hidden_dim_1
+        self.hidden_dim_2 = hidden_dim_2
+        self.dropout = dropout
 
     def _tokenize_title(self, title):
         filtered_title_words = re.sub(r'[^a-z0-9 ]', '', title.lower()).split()
@@ -72,8 +113,9 @@ class ModelConfiguration:
             "domains": len(self.domain_map) + 1,
             "domain_embedding_size": 16,
             "time_features": 5, # year, day of week cos/sin, hour of day cos/sin
-            "hidden_dim_1_size": 256,
-            "hidden_dim_2_size": 512,
+            "hidden_dim_1_size": self.hidden_dim_1,
+            "hidden_dim_2_size": self.hidden_dim_2,
+            "dropout": self.dropout,
         }
 
     def prepare_batch(self, batch):
@@ -145,7 +187,7 @@ class HackerNewsNet(nn.Module):
         # Layers
         self.fc1 = nn.Linear(input_feature_length, hidden_dim_1_size)
         self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.2)
+        self.dropout = nn.Dropout(dimensions["dropout"])
         self.fc2 = nn.Linear(hidden_dim_1_size, hidden_dim_2_size)
         self.fc3 = nn.Linear(hidden_dim_2_size, 1)
         
@@ -179,7 +221,7 @@ class HackerNewsNet(nn.Module):
         return torch.squeeze(x, dim=1)  # The final dimension is size 1 - flatten it / remove it
 
 
-def train_model_epoch(model, data_loader, criterion, optimizer, preparer):
+def train_model_epoch(model, data_loader, criterion, optimizer, preparer, epoch=None):
     """
     Train the model for one epoch.
     """
@@ -203,12 +245,28 @@ def train_model_epoch(model, data_loader, criterion, optimizer, preparer):
         running_loss += loss.item()
         print_running_loss += loss.item()
 
+        # Log batch-level metrics to wandb
+        if wandb.run is not None:
+            wandb.log({
+                "batch_loss": loss.item(),
+                "batch": batch_idx + (epoch - 1) * total_batches if epoch else batch_idx
+            })
+
         batch_num = batch_idx + 1
         if batch_num % print_every == 0:
             print(f'Batch: {batch_num} of {total_batches}, Recent loss: {print_running_loss / print_every:.4f}')
             print_running_loss = 0.0
     
-    return running_loss / total_batches if total_batches > 0 else 0.0
+    avg_loss = running_loss / total_batches if total_batches > 0 else 0.0
+    
+    # Log epoch-level training metrics to wandb
+    if wandb.run is not None and epoch is not None:
+        wandb.log({
+            "epoch": epoch,
+            "train_loss": avg_loss,
+        })
+    
+    return avg_loss
 
 
 def evaluate_model(model, data_loader, criterion, preparer):
@@ -254,32 +312,44 @@ def evaluate_model(model, data_loader, criterion, preparer):
     print(f'Mean predicted raw score {predicted_raw_scores.mean():.2f} (std: {predicted_raw_scores.std():.4f})')
     print(f'Mean actual    raw score: {actual_raw_scores.mean():.4f} (std: {actual_raw_scores.std():.4f})')
     
+    # Log test metrics to wandb
+    if wandb.run is not None:
+        wandb.log({
+            "test_loss": avg_loss,
+            "predicted_log_score_mean": predicted_log_scores.mean().item(),
+            "predicted_log_score_std": predicted_log_scores.std().item(),
+            "actual_log_score_mean": actual_log_scores.mean().item(),
+            "actual_log_score_std": actual_log_scores.std().item(),
+            "predicted_raw_score_mean": predicted_raw_scores.mean().item(),
+            "predicted_raw_score_std": predicted_raw_scores.std().item(),
+            "actual_raw_score_mean": actual_raw_scores.mean().item(),
+            "actual_raw_score_std": actual_raw_scores.std().item(),
+        })
+    
     return avg_loss
 
-def main():
+def train_model(settings: ModelRunSettings):
     """
-    Main function demonstrating the complete workflow.
+    Train the model with given settings.
+    
+    Args:
+        settings: ModelRunSettings instance with hyperparameters
+    
+    Returns:
+        dict: Training results with final test loss and other metrics
     """
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Train HackerNews score prediction model')
-    parser.add_argument('--batch-size', type=int, default=128,
-                        help='Batch size for training and evaluation (default: 128)')
-    parser.add_argument('--epochs', type=int, default=3,
-                        help='Number of training epochs (default: 3)')
-    parser.add_argument('--continue', type=bool, default=False,
-        help='Whether to keep training from a saved model (default: False)')
-    args = parser.parse_args()
+    
+    if not isinstance(settings, ModelRunSettings):
+        raise TypeError("settings must be an instance of ModelRunSettings")
     
     # Load environment variables from .env file
     load_dotenv()
     
     # Set device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    continue_model = getattr(args, "continue")
     print(f'Using device: {device}')
-    print(f'Batch size: {args.batch_size}')
-    print(f'Epochs: {args.epochs}')
-    print(f'Continue from existing model: {continue_model}')
+
+    settings.print_settings()
 
     print("Loading dataset...")
     datasets.config.IN_MEMORY_MAX_SIZE = 8 * 1024 * 1024 # 8GB
@@ -297,8 +367,8 @@ def main():
     print(f"Dataset loaded and split into train: {len(train_dataset)} and test: {len(test_dataset)}")
 
     # Get train and test loaders
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size)
+    train_loader = DataLoader(train_dataset, batch_size=settings.batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=settings.batch_size)
 
     word_vectors = torch.load(folder + '/word_vectors.pt')
 
@@ -310,32 +380,30 @@ def main():
         vocabulary=word_vectors["vocabulary"],
         vocabulary_embeddings=word_vectors["embeddings"],
         device=device,
+        hidden_dim_1=settings.hidden_dim_1,
+        hidden_dim_2=settings.hidden_dim_2,
+        dropout=settings.dropout
     )
 
     print("Configuration:")
     pprint(configuration.dimensions())
 
-    # print("\nA small sample batch:")
-    # sample_loader = DataLoader(train_dataset, batch_size=2)
-    # for raw_batch in sample_loader:
-    #     pprint(raw_batch)
-    #     batch = configuration.prepare_batch(raw_batch)
-    #     pprint(batch)
-    #     break
-
     model_path = folder + '/hackernews_model.pth'
 
     # Initialize model
     model = HackerNewsNet(configuration).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=settings.learning_rate)
 
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
-
-    if continue_model:
+    if settings.continue_model:
         print(f"Loading model and optimizer state from {model_path}...")
-        loaded_data = torch.load(model_path)
-        optimizer.load_state_dict(loaded_data['optimizer'])
-        model.load_state_dict(loaded_data["model"])
-        start_epoch = loaded_data['epoch']
+        try:
+            loaded_data = torch.load(model_path)
+            optimizer.load_state_dict(loaded_data['optimizer'])
+            model.load_state_dict(loaded_data["model"])
+            start_epoch = loaded_data['epoch']
+        except (FileNotFoundError, KeyError) as e:
+            print(f"Could not load model: {e}. Starting from scratch.")
+            start_epoch = 1
     else:
         start_epoch = 1
 
@@ -343,19 +411,84 @@ def main():
 
     # Training loop
     print('\nStarting training...')
-    num_epochs = args.epochs
+    
+    best_test_loss = float('inf')
+    training_results = {
+        'final_train_loss': 0.0,
+        'final_test_loss': 0.0,
+        'best_test_loss': float('inf'),
+        'epochs_completed': 0
+    }
 
-    for epoch in range(start_epoch, num_epochs + 1):
-        print(f'\nEpoch {epoch}/{num_epochs}')
-        train_loss = train_model_epoch(model, train_loader, criterion, optimizer, configuration)
+    for epoch in range(start_epoch, settings.epochs + 1):
+        print(f'\nEpoch {epoch}/{settings.epochs}')
+        train_loss = train_model_epoch(model, train_loader, criterion, optimizer, configuration, epoch)
         test_loss = evaluate_model(model, test_loader, criterion, configuration)
 
+        # Track best test loss
+        if test_loss < best_test_loss:
+            best_test_loss = test_loss
+            
+        # Update results
+        training_results['final_train_loss'] = train_loss
+        training_results['final_test_loss'] = test_loss
+        training_results['best_test_loss'] = best_test_loss
+        training_results['epochs_completed'] = epoch
+
+        # Save checkpoint
         torch.save({
-            epoch: epoch,
-            model: model.state_dict(),
-            optimizer: optimizer.state_dict(),
+            'epoch': epoch,
+            'model': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'train_loss': train_loss,
+            'test_loss': test_loss,
         }, model_path)
         print(f'\nModel checkpointed to {model_path}')
+
+    print(f'\nTraining completed! Best test loss: {best_test_loss:.4f}')
+    return training_results
+
+
+def main():
+    """
+    Main function for command line interface.
+    Simplified interface focused on core training parameters.
+    For advanced features like wandb integration, use the programmatic interface.
+    """
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Train HackerNews score prediction model')
+    parser.add_argument('--batch-size', type=int, default=128,
+                        help='Batch size for training and evaluation (default: 128)')
+    parser.add_argument('--epochs', type=int, default=3,
+                        help='Number of training epochs (default: 3)')
+    parser.add_argument('--continue', type=bool, default=False,
+                        help='Whether to keep training from a saved model (default: False)')
+    parser.add_argument('--learning-rate', type=float, default=0.001,
+                        help='Learning rate for optimizer (default: 0.001)')
+    parser.add_argument('--dropout', type=float, default=0.2,
+                        help='Dropout rate (default: 0.2)')
+    parser.add_argument('--hidden-dim-1', type=int, default=256,
+                        help='First hidden layer dimension (default: 256)')
+    parser.add_argument('--hidden-dim-2', type=int, default=512,
+                        help='Second hidden layer dimension (default: 512)')
+    args = parser.parse_args()
+
+    # Create ModelRunSettings using the simple constructor
+    settings = ModelRunSettings(
+        batch_size=args.batch_size,
+        epochs=args.epochs,
+        learning_rate=args.learning_rate,
+        dropout=args.dropout,
+        hidden_dim_1=args.hidden_dim_1,
+        hidden_dim_2=args.hidden_dim_2,
+        continue_model=getattr(args, "continue", False)
+    )
+    
+    # Run training with the simplified interface
+    results = train_model(settings)
+    
+    print(f"\nTraining completed successfully!")
+    print(f"Final results: {results}")
 
 
 if __name__ == '__main__':
