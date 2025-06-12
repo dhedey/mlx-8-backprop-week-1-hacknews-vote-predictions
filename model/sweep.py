@@ -20,7 +20,7 @@ SWEEP_CONFIG = {
     },
     'parameters': {
         'batch_size': {
-            'values': [64, 128, 256]
+            'values': [1024]
         },
         'learning_rate': {
             'min': 0.0001,
@@ -39,7 +39,7 @@ SWEEP_CONFIG = {
             'values': [256, 512, 1024]
         },
         'epochs': {
-            'value': 5  # Fixed value for the sweep
+            'value': 2  # Fixed value for the sweep
         }
     }
 }
@@ -53,7 +53,7 @@ QUICK_SWEEP_CONFIG = {
     },
     'parameters': {
         'batch_size': {
-            'values': [128, 256]
+            'values': [1024]
         },
         'learning_rate': {
             'values': [0.001, 0.005]
@@ -81,7 +81,7 @@ RANDOM_SWEEP_CONFIG = {
     },
     'parameters': {
         'batch_size': {
-            'values': [64, 128, 256, 512]
+            'values': [1024]
         },
         'learning_rate': {
             'min': 0.0001,
