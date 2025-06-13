@@ -216,6 +216,7 @@ class HackerNewsNet(nn.Module):
         x = self.dropout(x)
         x = self.fc2(x)
         x = self.relu(x)
+        x = self.dropout(x)
         x = self.fc3(x)
 
         return torch.squeeze(x, dim=1)  # The final dimension is size 1 - flatten it / remove it
@@ -309,7 +310,7 @@ def evaluate_model(model, data_loader, criterion, preparer):
     print(f'Test Loss (MSE on log scores): {avg_loss:.4f}')
     print(f'Mean predicted log score: {predicted_log_scores.mean():.4f} (std: {predicted_log_scores.std():.4f})')
     print(f'Mean actual    log score: {actual_log_scores.mean():.4f} (std: {actual_log_scores.std():.4f})')
-    print(f'Mean predicted raw score {predicted_raw_scores.mean():.2f} (std: {predicted_raw_scores.std():.4f})')
+    print(f'Mean predicted raw score: {predicted_raw_scores.mean():.2f} (std: {predicted_raw_scores.std():.4f})')
     print(f'Mean actual    raw score: {actual_raw_scores.mean():.4f} (std: {actual_raw_scores.std():.4f})')
     
     # Log test metrics to wandb

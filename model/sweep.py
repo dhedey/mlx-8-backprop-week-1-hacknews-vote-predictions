@@ -44,68 +44,6 @@ SWEEP_CONFIG = {
     }
 }
 
-# Alternative sweep configurations for different experiments
-QUICK_SWEEP_CONFIG = {
-    'method': 'grid',
-    'metric': {
-        'name': 'test_loss',
-        'goal': 'minimize'
-    },
-    'parameters': {
-        'batch_size': {
-            'values': [1024]
-        },
-        'learning_rate': {
-            'values': [0.001, 0.005]
-        },
-        'dropout': {
-            'values': [0.2, 0.3]
-        },
-        'hidden_dim_1': {
-            'values': [256, 512]
-        },
-        'hidden_dim_2': {
-            'values': [512]
-        },
-        'epochs': {
-            'value': 3
-        }
-    }
-}
-
-RANDOM_SWEEP_CONFIG = {
-    'method': 'random',
-    'metric': {
-        'name': 'test_loss',
-        'goal': 'minimize'
-    },
-    'parameters': {
-        'batch_size': {
-            'values': [1024]
-        },
-        'learning_rate': {
-            'min': 0.0001,
-            'max': 0.02,
-            'distribution': 'log_uniform'
-        },
-        'dropout': {
-            'min': 0.1,
-            'max': 0.6,
-            'distribution': 'uniform'
-        },
-        'hidden_dim_1': {
-            'values': [128, 256, 512, 1024]
-        },
-        'hidden_dim_2': {
-            'values': [256, 512, 1024, 2048]
-        },
-        'epochs': {
-            'value': 5
-        }
-    }
-}
-
-
 def train_sweep_run():
     """
     Single training run for wandb sweep.
@@ -160,7 +98,7 @@ def train_sweep_run():
         wandb.finish()
 
 
-def create_and_run_sweep(config=None, project_name="hackernews-score-prediction", count=10):
+def create_and_run_sweep(config, project_name, count=10):
     """
     Create and run a wandb sweep programmatically.
     
@@ -169,9 +107,6 @@ def create_and_run_sweep(config=None, project_name="hackernews-score-prediction"
         project_name: W&B project name
         count: Number of runs to execute in the sweep
     """
-    if config is None:
-        config = SWEEP_CONFIG
-    
     print(f"🔧 Creating sweep with {config['method']} optimization...")
     print(f"📊 Target metric: {config['metric']['name']} ({config['metric']['goal']})")
     
@@ -182,13 +117,13 @@ def create_and_run_sweep(config=None, project_name="hackernews-score-prediction"
     
     # Run the sweep
     print(f"🏃 Starting sweep agent with {count} runs...")
-    wandb.agent(sweep_id, train_sweep_run, count=count)
+    wandb.agent(sweep_id, train_sweep_run, project=project_name, count=count)
     
     print(f"🎉 Sweep completed!")
     return sweep_id
 
 
-def run_existing_sweep(sweep_id, count=10):
+def run_existing_sweep(sweep_id, project_name, count=10):
     """
     Run an existing sweep by ID.
     
@@ -196,8 +131,8 @@ def run_existing_sweep(sweep_id, count=10):
         sweep_id: The ID of an existing sweep
         count: Number of additional runs to execute
     """
-    print(f"🔄 Joining existing sweep: {sweep_id}")
-    wandb.agent(sweep_id, train_sweep_run, count=count)
+    print(f"🔄 Joining existing sweep: {sweep_id} against {project_name}")
+    wandb.agent(sweep_id, train_sweep_run, project=project_name, count=count)
 
 
 def main():
@@ -207,8 +142,6 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Run hyperparameter sweeps for HackerNews model')
-    parser.add_argument('--config', choices=['default', 'quick', 'random'], default='default',
-                        help='Sweep configuration to use (default: default)')
     parser.add_argument('--project', default='hackernews-score-prediction',
                         help='W&B project name (default: hackernews-score-prediction)')
     parser.add_argument('--count', type=int, default=20,
@@ -221,15 +154,8 @@ def main():
     args = parser.parse_args()
     
     # Select configuration
-    if args.config == 'quick':
-        config = QUICK_SWEEP_CONFIG
-        print("📋 Using quick grid search configuration")
-    elif args.config == 'random':
-        config = RANDOM_SWEEP_CONFIG
-        print("📋 Using random search configuration")
-    else:
-        config = SWEEP_CONFIG
-        print("📋 Using default Bayesian optimization configuration")
+    config = SWEEP_CONFIG
+    print("📋 Using default Bayesian optimization configuration")
     
     if args.dry_run:
         print("\n🔍 Sweep configuration:")
@@ -244,7 +170,7 @@ def main():
     
     # Run sweep
     if args.sweep_id:
-        run_existing_sweep(args.sweep_id, args.count)
+        run_existing_sweep(args.sweep_id, args.project, args.count)
     else:
         sweep_id = create_and_run_sweep(config, args.project, args.count)
         print(f"\n💾 Save this sweep ID for future use: {sweep_id}")
