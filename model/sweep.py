@@ -49,7 +49,7 @@ SWEEP_CONFIG = {
             'values': [32, 64, 128, 256, 512]
         },
         'epochs': {
-            'value': [2, 4]
+            'values': [2, 4]
         }
     }
 }
@@ -66,12 +66,7 @@ def train_sweep_run():
         # Get configuration from wandb
         config = wandb.config
         
-        print(f"\n🚀 Starting sweep run with config:")
-        print(f"  Batch size: {config.batch_size}")
-        print(f"  Learning rate: {config.learning_rate}")
-        print(f"  Dropout: {config.dropout}")
-        print(f"  Hidden dims: {config.hidden_dim_1}, {config.hidden_dim_2}")
-        print(f"  Epochs: {config.epochs}")
+        print(f"\n🚀 Starting sweep run")
         
         # Create ModelHyperparameters from wandb config
         settings = ModelHyperparameters(
