@@ -12,6 +12,7 @@ def main():
     parser = argparse.ArgumentParser(description='Predict HackerNews score prediction model')
     parser.add_argument('--title', type=str, help='The title of the story', required=True)
     parser.add_argument('--author', type=str, help='The author of the story', required=True)
+    parser.add_argument('--url', type=str, help='The url of the story', required=True)
     parser.add_argument('--time', type=str, help='The timestamp of the story (default = now)', default=None)
     args = parser.parse_args()
 
@@ -32,6 +33,7 @@ def main():
     prediction = model.predict(
         title=args.title,
         author=args.author,
+        url=args.url,
         time=time
     )
 

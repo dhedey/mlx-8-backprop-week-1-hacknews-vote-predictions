@@ -35,7 +35,7 @@ class TrainingHyperparameters:
 
     @classmethod
     def for_prediction(cls):
-        cls(
+        return cls(
             batch_size=1,
             epochs=0,
             learning_rate=0,
@@ -186,10 +186,10 @@ class HackerNewsNet(nn.Module):
     @classmethod
     def load(cls, folder, device, training_parameters):
         torch.serialization.add_safe_globals([ModelHyperparameters])
-        loaded_data = torch.load(
-            folder + '/hackernews_model.pth',
-            map_location=device,
-        )
+        model_location = folder + '/hackernews_model.pth'
+
+        print(f"Location {model_location}")
+        loaded_data = torch.load(model_location, map_location=device)
 
         model = cls(
             feature_preparer = FeaturePreparer.load(folder, device),
@@ -197,7 +197,7 @@ class HackerNewsNet(nn.Module):
             training_params = training_parameters
         ).to(device)
 
-        model.load_state_dict(loaded_data["state_dict"])
+        model.load_state_dict(loaded_data["model"])
         return model
 
     def __init__(self, feature_preparer: FeaturePreparer, model_params: ModelHyperparameters,
@@ -235,7 +235,6 @@ class HackerNewsNet(nn.Module):
         ]))
 
     def predict(self, title, url, author, time):
-
         self.eval()
         domain = extract_domain(url) or "UNKNOWN"
 
@@ -250,8 +249,8 @@ class HackerNewsNet(nn.Module):
 
         score = torch.exp(output[0]) - 1
         return {
-            "log_score": output[0],
-            "score": score,
+            "log_score": output[0].detach().item(),
+            "score": score.detach().item(),
         }
 
     def forward(self, features):
