@@ -212,7 +212,7 @@ def train_model(
 
         # Save checkpoint
         torch.save({
-            'model_parameters': model_parameters.to_dict(),
+            'model_parameters': model_parameters,
             'epoch': epoch,
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
