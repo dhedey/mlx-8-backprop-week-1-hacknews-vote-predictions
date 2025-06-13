@@ -251,6 +251,10 @@ def main():
                         help='First hidden layer dimension (default: 256)')
     parser.add_argument('--hidden-dim-2', type=int, default=1024,
                         help='Second hidden layer dimension (default: 1024)')
+    parser.add_argument('--batch-norms', type=bool, default=False,
+                        help='Whether to include batch norms (default: false)')
+    parser.add_argument('--freeze-vocab-weights', type=bool, default=False,
+                        help='Whether to freeze vocab weights (default: false)')
     args = parser.parse_args()
 
     continue_training = getattr(args, "continue", False)
@@ -259,13 +263,14 @@ def main():
     results = train_model(
         model_parameters=ModelHyperparameters(
             hidden_dimensions=[args.hidden_dim_1, args.hidden_dim_2],
+            include_batch_norms=args.batch_norms,
         ),
         training_parameters=TrainingHyperparameters(
             batch_size=args.batch_size,
             epochs=args.epochs,
             learning_rate=args.learning_rate,
             dropout=args.dropout,
-            freeze_embeddings=False,
+            freeze_embeddings=args.freeze_vocab_weights,
         ),
         continue_training=continue_training,
     )
