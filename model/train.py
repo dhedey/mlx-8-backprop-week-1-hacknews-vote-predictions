@@ -173,6 +173,8 @@ def train_model(
             loaded_data = torch.load(model_path)
             loaded_model_parameters = loaded_data["model_parameters"]
             if loaded_model_parameters != model_parameters:
+                print(f"Loaded: {loaded_model_parameters}")
+                print(f"Provided: {model_parameters}")
                 raise RuntimeError("Loaded model parameters do not match provided model parameters. Cannot continue training.")
             optimizer.load_state_dict(loaded_data['optimizer'])
             model.load_state_dict(loaded_data["model"])

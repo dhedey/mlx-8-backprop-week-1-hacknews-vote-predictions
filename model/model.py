@@ -57,7 +57,6 @@ class ModelHyperparameters:
     def to_dict(self):
         return vars(self)
 
-
 @dataclass
 class FeatureParameters:
     title_token_ids: int
