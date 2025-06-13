@@ -315,6 +315,7 @@ def train_model(hyper_parameters: ModelHyperparameters, continue_training = Fals
     
     Args:
         hyper_parameters: ModelRunSettings instance with hyperparameters
+        continue_training: Whether to continue training from the last epoch
     
     Returns:
         dict: Training results with final test loss and other metrics
