@@ -453,10 +453,14 @@ def main():
                         help='Learning rate for optimizer (default: 0.001)')
     parser.add_argument('--dropout', type=float, default=0.2,
                         help='Dropout rate (default: 0.2)')
-    parser.add_argument('--hidden-dim-1', type=int, default=256,
+    parser.add_argument('--hidden-dim-1', type=int, default=128,
+                        help='First hidden layer dimension (default: 128)')
+    parser.add_argument('--hidden-dim-2', type=int, default=384,
+                        help='Second hidden layer dimension (default: 384)')
+    parser.add_argument('--hidden-dim-3', type=int, default=256,
                         help='First hidden layer dimension (default: 256)')
-    parser.add_argument('--hidden-dim-2', type=int, default=512,
-                        help='Second hidden layer dimension (default: 512)')
+    parser.add_argument('--hidden-dim-4', type=int, default=64,
+                        help='Second hidden layer dimension (default: 64)')
     args = parser.parse_args()
 
     # Create ModelRunSettings using the simple constructor
@@ -465,7 +469,7 @@ def main():
         epochs=args.epochs,
         learning_rate=args.learning_rate,
         dropout=args.dropout,
-        hidden_dimensions=[args.hidden_dim_1, args.hidden_dim_2],
+        hidden_dimensions=[args.hidden_dim_1, args.hidden_dim_2, args.hidden_dim_3, args.hidden_dim_4],
     )
 
     continue_training = getattr(args, "continue", False)

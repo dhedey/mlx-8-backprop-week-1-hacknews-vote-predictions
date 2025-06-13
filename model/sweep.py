@@ -31,7 +31,7 @@ SWEEP_CONFIG = {
         },
         'learning_rate': {
             'min': 0.0001,
-            'max': 0.01,
+            'max': 0.001,
             'distribution': 'log_uniform_values'
         },
         'dropout': {
@@ -40,16 +40,19 @@ SWEEP_CONFIG = {
             'distribution': 'uniform'
         },
         'hidden_dim_1': {
-            'values': [64, 128, 256, 512]
+            'values': [64, 128, 256]
         },
         'hidden_dim_2': {
-            'values': [64, 128, 256, 512]
+            'values': [256, 384, 512]
         },
         'hidden_dim_3': {
-            'values': [32, 64, 128, 256, 512]
+            'values': [64, 128, 256]
+        },
+        'hidden_dim_4': {
+            'values': [32, 64, 128]
         },
         'epochs': {
-            'values': [2, 4]
+            'values': [2, 8, 16]
         }
     }
 }
