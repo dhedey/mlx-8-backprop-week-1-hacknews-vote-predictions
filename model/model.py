@@ -185,7 +185,11 @@ class FeaturePreparer:
 class HackerNewsNet(nn.Module):
     @classmethod
     def load(cls, folder, device, training_parameters):
-        loaded_data = torch.load(folder + '/hackernews_model.pth')
+        torch.serialization.add_safe_globals([ModelHyperparameters])
+        loaded_data = torch.load(
+            folder + '/hackernews_model.pth',
+            map_location=device,
+        )
 
         model = cls(
             feature_preparer = FeaturePreparer.load(folder, device),

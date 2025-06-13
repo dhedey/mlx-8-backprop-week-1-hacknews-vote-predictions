@@ -170,7 +170,11 @@ def train_model(
     if continue_training:
         print(f"Loading model and optimizer state from {model_path}...")
         try:
-            loaded_data = torch.load(model_path)
+            torch.serialization.add_safe_globals([ModelHyperparameters])
+            loaded_data = torch.load(
+                model_path,
+                map_location=device,
+            )
             loaded_model_parameters = loaded_data["model_parameters"]
             if loaded_model_parameters != model_parameters:
                 print(f"Loaded: {loaded_model_parameters}")
