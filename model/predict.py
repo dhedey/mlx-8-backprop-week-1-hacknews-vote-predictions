@@ -6,7 +6,6 @@ from datetime import datetime, UTC
 
 from model import HackerNewsNet, TrainingHyperparameters
 
-
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Predict HackerNews score prediction model')

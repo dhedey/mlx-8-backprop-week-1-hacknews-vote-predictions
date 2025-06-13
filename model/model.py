@@ -69,6 +69,17 @@ class FeatureParameters:
     def to_dict(self):
         return vars(self)
 
+@dataclass
+class FeatureDisabling:
+    disable_title: bool = False
+    disable_author: bool = False
+    disable_domain: bool = False
+    disable_year: bool = False
+    disable_day: bool = False
+    disable_time: bool = False
+
+    def to_dict(self):
+        return vars(self)
 
 def create_id_map(df, min_count, column):
     return {
@@ -184,7 +195,7 @@ class FeaturePreparer:
 
 class HackerNewsNet(nn.Module):
     @classmethod
-    def load(cls, folder, device, training_parameters):
+    def load(cls, folder, device, training_parameters, feature_disabling: FeatureDisabling = None):
         torch.serialization.add_safe_globals([ModelHyperparameters])
         model_location = folder + '/hackernews_model.pth'
 
@@ -194,16 +205,18 @@ class HackerNewsNet(nn.Module):
         model = cls(
             feature_preparer = FeaturePreparer.load(folder, device),
             model_params = loaded_data["model_parameters"],
-            training_params = training_parameters
+            training_params = training_parameters,
+            feature_disabling = feature_disabling,
         ).to(device)
 
         model.load_state_dict(loaded_data["model"])
         return model
 
     def __init__(self, feature_preparer: FeaturePreparer, model_params: ModelHyperparameters,
-                 training_params: TrainingHyperparameters):
+                 training_params: TrainingHyperparameters, feature_disabling: FeatureDisabling = None):
         super(HackerNewsNet, self).__init__()
 
+        self.disabling = feature_disabling or FeatureDisabling()
         self.feature_preparer = feature_preparer
         feature_parameters = feature_preparer.feature_parameters()
 
@@ -259,9 +272,26 @@ class HackerNewsNet(nn.Module):
 
         # We now create features which should be of dimension (batch, feature_length)
         title_features = torch.mean(embedded_title_tokens, dim=1)
+        if self.disabling.disable_title:
+            title_features = torch.zeros_like(title_features)
+
         time_features = features['time']
+        if self.disabling.disable_year:
+            time_features[:, 0] = 0
+        if self.disabling.disable_day:
+            time_features[:, 1] = 0
+            time_features[:, 2] = 0
+        if self.disabling.disable_time:
+            time_features[:, 3] = 0
+            time_features[:, 4] = 0
+
         domain_features = self.domain_embedding(features['domain_id'])
+        if self.disabling.disable_domain:
+            domain_features = torch.zeros_like(domain_features)
+
         author_features = self.author_embedding(features['author_id'])
+        if self.disabling.disable_author:
+            author_features = torch.zeros_like(author_features)
 
         x = torch.cat(  # Concatenate along the feature dimension
             [
@@ -276,3 +306,61 @@ class HackerNewsNet(nn.Module):
         x = self.layers(x)
 
         return torch.squeeze(x, dim=1)  # The final dimension is size 1 - flatten it / remove it
+
+
+def evaluate_model(model: HackerNewsNet, data_loader, criterion, should_print=True):
+    """
+    Evaluate the model on test data.
+    """
+    model.eval()
+    total_loss = 0.0
+    total_batches = 0
+    predicted_log_scores = []
+    actual_log_scores = []
+
+    if should_print:
+        print("Evaluating on test data...")
+
+    with torch.no_grad():
+        for raw_batch in data_loader:
+            # Process the batch
+            batch = model.feature_preparer.prepare_batch(raw_batch)
+            log_scores = batch['log_scores']
+
+            outputs = model(batch['features'])
+            loss = criterion(outputs, batch['log_scores'])
+            total_loss += loss.item()
+            total_batches += 1
+
+            # Store predictions for analysis
+            predicted_log_scores.extend(outputs.cpu().numpy().flatten())
+            actual_log_scores.extend(log_scores.cpu().numpy().flatten())
+
+    avg_loss = total_loss / total_batches if total_batches > 0 else 0.0
+
+    # Calculate some statistics
+    predicted_log_scores = torch.tensor(predicted_log_scores)
+    actual_log_scores = torch.tensor(actual_log_scores)
+
+    # Convert back to actual scores for interpretability
+    predicted_raw_scores = torch.exp(predicted_log_scores) - 1
+    actual_raw_scores = torch.exp(actual_log_scores) - 1
+
+    if should_print:
+        print(f'Test Loss (MSE on log scores): {avg_loss:.4f}')
+        print(f'Mean predicted log score: {predicted_log_scores.mean():.4f} (std: {predicted_log_scores.std():.4f})')
+        print(f'Mean actual    log score: {actual_log_scores.mean():.4f} (std: {actual_log_scores.std():.4f})')
+        print(f'Mean predicted raw score: {predicted_raw_scores.mean():.2f} (std: {predicted_raw_scores.std():.4f})')
+        print(f'Mean actual    raw score: {actual_raw_scores.mean():.4f} (std: {actual_raw_scores.std():.4f})')
+
+    return {
+        "test_loss": avg_loss,
+        "predicted_log_score_mean": predicted_log_scores.mean().item(),
+        "predicted_log_score_std": predicted_log_scores.std().item(),
+        "actual_log_score_mean": actual_log_scores.mean().item(),
+        "actual_log_score_std": actual_log_scores.std().item(),
+        "predicted_raw_score_mean": predicted_raw_scores.mean().item(),
+        "predicted_raw_score_std": predicted_raw_scores.std().item(),
+        "actual_raw_score_mean": actual_raw_scores.mean().item(),
+        "actual_raw_score_std": actual_raw_scores.std().item(),
+    }

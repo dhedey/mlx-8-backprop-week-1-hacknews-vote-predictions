@@ -10,7 +10,7 @@ import wandb
 from dotenv import load_dotenv
 from torch.utils.data import DataLoader
 
-from model import TrainingHyperparameters, ModelHyperparameters, HackerNewsNet, FeaturePreparer
+from model import TrainingHyperparameters, ModelHyperparameters, HackerNewsNet, FeaturePreparer, evaluate_model
 
 def train_model_epoch(model, data_loader, criterion, optimizer, preparer, epoch=None):
     """
@@ -55,66 +55,6 @@ def train_model_epoch(model, data_loader, criterion, optimizer, preparer, epoch=
         wandb.log({
             "epoch": epoch,
             "train_loss": avg_loss,
-        })
-    
-    return avg_loss
-
-
-def evaluate_model(model, data_loader, criterion, preparer):
-    """
-    Evaluate the model on test data.
-    """
-    model.eval()
-    total_loss = 0.0
-    total_batches = 0
-    predicted_log_scores = []
-    actual_log_scores = []
-
-    print("Evaluating on test data...")
-
-    with torch.no_grad():
-        for raw_batch in data_loader:
-            # Process the batch
-            batch = preparer.prepare_batch(raw_batch)
-            log_scores = batch['log_scores']
-            
-            outputs = model(batch['features'])
-            loss = criterion(outputs, batch['log_scores'])
-            total_loss += loss.item()
-            total_batches += 1
-            
-            # Store predictions for analysis
-            predicted_log_scores.extend(outputs.cpu().numpy().flatten())
-            actual_log_scores.extend(log_scores.cpu().numpy().flatten())
-    
-    avg_loss = total_loss / total_batches if total_batches > 0 else 0.0
-    
-    # Calculate some statistics
-    predicted_log_scores = torch.tensor(predicted_log_scores)
-    actual_log_scores = torch.tensor(actual_log_scores)
-    
-    # Convert back to actual scores for interpretability
-    predicted_raw_scores = torch.exp(predicted_log_scores) - 1
-    actual_raw_scores = torch.exp(actual_log_scores) - 1
-    
-    print(f'Test Loss (MSE on log scores): {avg_loss:.4f}')
-    print(f'Mean predicted log score: {predicted_log_scores.mean():.4f} (std: {predicted_log_scores.std():.4f})')
-    print(f'Mean actual    log score: {actual_log_scores.mean():.4f} (std: {actual_log_scores.std():.4f})')
-    print(f'Mean predicted raw score: {predicted_raw_scores.mean():.2f} (std: {predicted_raw_scores.std():.4f})')
-    print(f'Mean actual    raw score: {actual_raw_scores.mean():.4f} (std: {actual_raw_scores.std():.4f})')
-    
-    # Log test metrics to wandb
-    if wandb.run is not None:
-        wandb.log({
-            "test_loss": avg_loss,
-            "predicted_log_score_mean": predicted_log_scores.mean().item(),
-            "predicted_log_score_std": predicted_log_scores.std().item(),
-            "actual_log_score_mean": actual_log_scores.mean().item(),
-            "actual_log_score_std": actual_log_scores.std().item(),
-            "predicted_raw_score_mean": predicted_raw_scores.mean().item(),
-            "predicted_raw_score_std": predicted_raw_scores.std().item(),
-            "actual_raw_score_mean": actual_raw_scores.mean().item(),
-            "actual_raw_score_std": actual_raw_scores.std().item(),
         })
     
     return avg_loss
@@ -202,7 +142,13 @@ def train_model(
     for epoch in range(start_epoch, training_parameters.epochs + 1):
         print(f'\nEpoch {epoch}/{training_parameters.epochs}')
         train_loss = train_model_epoch(model, train_loader, criterion, optimizer, feature_preparer, epoch)
-        test_loss = evaluate_model(model, test_loader, criterion, feature_preparer)
+        evaluation_results = evaluate_model(model, test_loader, criterion, should_print=True)
+
+        # Log test metrics to wandb
+        if wandb.run is not None:
+            wandb.log(evaluation_results)
+
+        test_loss = evaluation_results["test_loss"]
 
         # Track best test loss
         if test_loss < best_test_loss:
