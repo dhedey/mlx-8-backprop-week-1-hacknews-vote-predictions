@@ -14,7 +14,7 @@ from train import train_model, ModelHyperparameters
 
 # Sweep configuration - equivalent to wandb_sweep.yaml but in Python
 SWEEP_CONFIG = {
-    'method': 'random',  # Can be 'grid', 'random', or 'bayes'
+    'method': 'bayes',  # Can be 'grid', 'random', or 'bayes'
     'metric': {
         'name': 'test_loss',
         'goal': 'minimize'
@@ -52,7 +52,7 @@ SWEEP_CONFIG = {
             'values': [32, 64, 128]
         },
         'epochs': {
-            'values': [2, 8, 16]
+            'values': [4, 16]
         }
     }
 }
