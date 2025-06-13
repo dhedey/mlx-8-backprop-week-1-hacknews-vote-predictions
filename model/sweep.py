@@ -9,8 +9,9 @@ It provides more control over the sweep process compared to the CLI-based approa
 import wandb
 import os
 
-from train import train_model, ModelHyperparameters
-
+from model.model import TrainingHyperparameters
+from train import train_model
+from model import ModelHyperparameters
 
 # Sweep configuration - equivalent to wandb_sweep.yaml but in Python
 SWEEP_CONFIG = {
@@ -30,8 +31,8 @@ SWEEP_CONFIG = {
             'values': [True, False]
         },
         'learning_rate': {
-            'min': 0.0001,
-            'max': 0.01,
+            'min': 0.001,
+            'max': 0.03,
             'distribution': 'log_uniform_values'
         },
         'dropout': {
@@ -63,24 +64,23 @@ def train_sweep_run():
     wandb.init()
     
     try:
-        # Get configuration from wandb
         config = wandb.config
         
         print(f"\n🚀 Starting sweep run")
-        
-        # Create ModelHyperparameters from wandb config
-        settings = ModelHyperparameters(
-            batch_size=config.batch_size,
-            epochs=config.epochs,
-            learning_rate=config.learning_rate,
-            dropout=config.dropout,
-            hidden_dimensions=[config.hidden_dim_1, config.hidden_dim_2, config.hidden_dim_3],
-            freeze_embeddings=config.freeze_embeddings,
-            include_batch_norms=config.include_batch_norms,
+
+        results = train_model(
+            model_parameters=ModelHyperparameters(
+                dropout=config.dropout,
+                hidden_dimensions=[config.hidden_dim_1, config.hidden_dim_2, config.hidden_dim_3],
+                include_batch_norms=config.include_batch_norms,
+            ),
+            training_parameters=TrainingHyperparameters(
+                batch_size=config.batch_size,
+                epochs=config.epochs,
+                learning_rate=config.learning_rate,
+                freeze_embeddings=config.freeze_embeddings,
+            ),
         )
-        
-        # Run training with the simplified interface
-        results = train_model(settings)
         
         # Log final metrics (wandb.log is also called within train_model)
         wandb.log({

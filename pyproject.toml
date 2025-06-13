@@ -19,6 +19,7 @@ dependencies = [
     "pip>=25.1.1",
     "tldextract>=5.3.0",
     "wandb>=0.20.1",
+    "python-dateutil>=2.9.0.post0",
 ]
 
 # https://docs.astral.sh/uv/concepts/projects/workspaces/
