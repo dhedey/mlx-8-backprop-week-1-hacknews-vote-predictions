@@ -8,12 +8,13 @@ It provides more control over the sweep process compared to the CLI-based approa
 
 import wandb
 import os
-from train import train_model, ModelRunSettings
+
+from train import train_model, ModelHyperparameters
 
 
 # Sweep configuration - equivalent to wandb_sweep.yaml but in Python
 SWEEP_CONFIG = {
-    'method': 'bayes',  # Can be 'grid', 'random', or 'bayes'
+    'method': 'random',  # Can be 'grid', 'random', or 'bayes'
     'metric': {
         'name': 'test_loss',
         'goal': 'minimize'
@@ -21,6 +22,12 @@ SWEEP_CONFIG = {
     'parameters': {
         'batch_size': {
             'values': [1024]
+        },
+        'freeze_embeddings': {
+            'values': [True, False]
+        },
+        'include_batch_norms': {
+            'values': [True, False]
         },
         'learning_rate': {
             'min': 0.0001,
@@ -33,13 +40,16 @@ SWEEP_CONFIG = {
             'distribution': 'uniform'
         },
         'hidden_dim_1': {
-            'values': [128, 256, 512]
+            'values': [64, 128, 256, 512]
         },
         'hidden_dim_2': {
-            'values': [256, 512, 1024]
+            'values': [64, 128, 256, 512]
+        },
+        'hidden_dim_3': {
+            'values': [32, 64, 128, 256, 512]
         },
         'epochs': {
-            'value': 2  # Fixed value for the sweep
+            'value': [2, 4]
         }
     }
 }
@@ -63,15 +73,15 @@ def train_sweep_run():
         print(f"  Hidden dims: {config.hidden_dim_1}, {config.hidden_dim_2}")
         print(f"  Epochs: {config.epochs}")
         
-        # Create ModelRunSettings from wandb config
-        settings = ModelRunSettings(
+        # Create ModelHyperparameters from wandb config
+        settings = ModelHyperparameters(
             batch_size=config.batch_size,
             epochs=config.epochs,
             learning_rate=config.learning_rate,
             dropout=config.dropout,
-            hidden_dim_1=config.hidden_dim_1,
-            hidden_dim_2=config.hidden_dim_2,
-            continue_model=False  # Don't continue models in sweeps
+            hidden_dimensions=[config.hidden_dim_1, config.hidden_dim_2, config.hidden_dim_3],
+            freeze_embeddings=config.freeze_embeddings,
+            include_batch_norms=config.include_batch_norms,
         )
         
         # Run training with the simplified interface

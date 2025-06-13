@@ -11,4 +11,5 @@ cd ~
 git clone https://github.com/dhedey/mlx-8-backprop-week-1-hacknews-vote-predictions.git
 cd mlx-8-backprop-week-1-hacknews-vote-predictions
 
-uv run ./model/train.py --batch-size 1024
+# uv run ./model/train.py --batch-size 1024
+# uv run ./model/sweep.py --count 10

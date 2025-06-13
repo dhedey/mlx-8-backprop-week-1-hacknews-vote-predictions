@@ -2,10 +2,12 @@
 Example script showing how to use the PostgreSQL DataLoader with a neural network model.
 This integrates the database data loader with the existing model architecture.
 """
+from collections import OrderedDict
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import math
 import re
 import pandas as pd
 from pprint import pprint
@@ -16,65 +18,53 @@ from torch.utils.data import DataLoader
 import datetime
 import argparse
 import wandb
-from dataclasses import dataclass
-
+from dataclasses import dataclass, field
 
 @dataclass
-class ModelRunSettings:
-    """
-    Encapsulates all hyperparameters and settings for model training.
-    """
+class ModelHyperparameters:
     batch_size: int = 128
-    epochs: int = 3
+    epochs: int = 5
     learning_rate: float = 0.001
+    # Model structure
     dropout: float = 0.2
-    hidden_dim_1: int = 256
-    hidden_dim_2: int = 512
-    continue_model: bool = False
-    
+    hidden_dimensions: list[int] = field(default_factory=lambda: [256, 128, 64])
+    freeze_embeddings: bool = False
+    include_batch_norms: bool = False
+    domain_embedding_size: int = 16
+    author_embedding_size: int = 16
+
     def to_dict(self):
-        """Convert to dictionary for wandb logging."""
-        return {
-            'batch_size': self.batch_size,
-            'epochs': self.epochs,
-            'learning_rate': self.learning_rate,
-            'dropout': self.dropout,
-            'hidden_dim_1': self.hidden_dim_1,
-            'hidden_dim_2': self.hidden_dim_2,
-            'continue_model': self.continue_model
-        }
-    
-    def print_settings(self):
-        """Print current settings."""
-        print(f'Batch size: {self.batch_size}')
-        print(f'Epochs: {self.epochs}')
-        print(f'Learning rate: {self.learning_rate}')
-        print(f'Dropout: {self.dropout}')
-        print(f'Hidden dimensions: {self.hidden_dim_1}, {self.hidden_dim_2}')
-        print(f'Continue from existing model: {self.continue_model}')
+        return vars(self)
 
+@dataclass
+class FeatureParameters:
+    title_token_ids: int
+    title_embedding_size: int
+    title_token_length: int
+    author_token_ids: int
+    domain_token_ids: int
+    time_features: int
 
-class ModelConfiguration:
-    def __init__(self, domain_counts_df, domain_min_count, author_counts_df, author_min_count, device, vocabulary, vocabulary_embeddings, hidden_dim_1=256, hidden_dim_2=512, dropout=0.2):
-        self.domain_map = {
-            x: i for i, x in enumerate(domain_counts_df[domain_counts_df["count"] >= domain_min_count]["domain"])
-        }
-        self.author_map = {
-            x: i for i, x in enumerate(author_counts_df[author_counts_df["count"] >= author_min_count]["author"])
-        }
-        self.author_counts_df = author_counts_df
-        self.vocabulary_embeddings = torch.cat([
+    def to_dict(self):
+        return vars(self)
+
+def create_id_map(df, min_count, column):
+    return {
+        x: i for i, x in enumerate(df[df["count"] >= min_count][column])
+    }
+
+class FeaturePreparer:
+    def __init__(self, domain_map, author_map, vocabulary, vocabulary_embeddings, device, title_token_length=20):
+        self.domain_map = domain_map
+        self.author_map = author_map
+        self.title_vocab_map = { word: i for i, word in enumerate(vocabulary) }
+        self.initial_vocabulary_embeddings = torch.cat([
             vocabulary_embeddings,
-            torch.zeros((1, vocabulary_embeddings.shape[1]), dtype=torch.float32)  # Placeholder for unknown words
+            torch.zeros((1, vocabulary_embeddings.shape[1]), dtype=torch.float32)  # Placeholder padding word
         ]).to(device)
         assert vocabulary_embeddings.shape[0] == len(vocabulary)
-        self.title_vocab_map = { word: i for i, word in enumerate(vocabulary) }
-        self.title_embedding_size = vocabulary_embeddings.shape[1]
-        self.title_token_length = 20
+        self.title_token_length = title_token_length
         self.device = device
-        self.hidden_dim_1 = hidden_dim_1
-        self.hidden_dim_2 = hidden_dim_2
-        self.dropout = dropout
 
     def _tokenize_title(self, title):
         filtered_title_words = re.sub(r'[^a-z0-9 ]', '', title.lower()).split()
@@ -103,20 +93,15 @@ class ModelConfiguration:
         else:
             return len(self.domain_map)  # Unknown
 
-    def dimensions(self):
-        return {
-            "title_vocab_size": len(self.title_vocab_map) + 1, # Include placeholder
-            "title_embedding_size": self.title_embedding_size,
-            "title_token_length": self.title_token_length, # Anything more than this will be truncated, or padded
-            "authors": len(self.author_map) + 1, # Include unknown
-            "author_embedding_size": 16,
-            "domains": len(self.domain_map) + 1,
-            "domain_embedding_size": 16,
-            "time_features": 5, # year, day of week cos/sin, hour of day cos/sin
-            "hidden_dim_1_size": self.hidden_dim_1,
-            "hidden_dim_2_size": self.hidden_dim_2,
-            "dropout": self.dropout,
-        }
+    def feature_parameters(self) -> FeatureParameters:
+        return FeatureParameters(
+            title_token_ids=len(self.title_vocab_map) + 1, # Include placeholder
+            title_embedding_size=self.initial_vocabulary_embeddings.shape[1],
+            title_token_length=self.title_token_length, # Anything more than this will be truncated, or padded
+            author_token_ids=len(self.author_map) + 1, # Include unknown
+            domain_token_ids=len(self.domain_map) + 1, # Include unknown
+            time_features=5, # year, day of week cos/sin, hour of day cos/sin
+        )
 
     def prepare_batch(self, batch):
         # The streaming loader already returns tensors for numeric data and lists for text
@@ -130,8 +115,6 @@ class ModelConfiguration:
 
         timestamps = [datetime.datetime.fromtimestamp(time, datetime.UTC) for time in batch['time']]
         year = [date.year - 2000 for date in timestamps]
-        day_of_week = [date.weekday() for date in timestamps]
-        import math
         day_of_week_cos = [math.cos(2 * math.pi * date.weekday()/7) for date in timestamps]
         day_of_week_sin = [math.sin(2 * math.pi * date.weekday()/7) for date in timestamps]
         hour_of_day_cos = [math.cos(2 * math.pi * date.hour / 24) for date in timestamps]
@@ -164,32 +147,36 @@ class HackerNewsNet(nn.Module):
     Neural network for HackerNews score prediction.
     """
     
-    def __init__(self, configuration: ModelConfiguration):
+    def __init__(self, feature_preparer: FeaturePreparer, hyper_parameters: ModelHyperparameters):
         super(HackerNewsNet, self).__init__()
 
-        dimensions = configuration.dimensions()
+        feature_parameters = feature_preparer.feature_parameters()
 
         self.title_embedding = nn.Embedding(
-            dimensions["title_vocab_size"],
-            dimensions["title_embedding_size"],
-            _weight=configuration.vocabulary_embeddings,
-            # _freeze=True,
+            feature_parameters.title_token_ids,
+            feature_parameters.title_embedding_size,
+            _weight=feature_preparer.initial_vocabulary_embeddings,
+            _freeze=hyper_parameters.freeze_embeddings,
         )
-        self.author_embedding = nn.Embedding(dimensions["authors"], dimensions["author_embedding_size"])
-        self.domain_embedding = nn.Embedding(dimensions["domains"], dimensions["domain_embedding_size"])
+        self.author_embedding = nn.Embedding(feature_parameters.author_token_ids, hyper_parameters.author_embedding_size)
+        self.domain_embedding = nn.Embedding(feature_parameters.domain_token_ids, hyper_parameters.domain_embedding_size)
 
-        input_feature_length = dimensions["title_embedding_size"] + dimensions["author_embedding_size"] + dimensions["domain_embedding_size"] + dimensions["time_features"]
-        hidden_dim_1_size = dimensions["hidden_dim_1_size"]
-        hidden_dim_2_size = dimensions["hidden_dim_2_size"]
+        input_feature_length = feature_parameters.title_embedding_size + hyper_parameters.author_embedding_size + hyper_parameters.domain_embedding_size + feature_parameters.time_features
 
-        self.device = configuration.device
+        self.device = feature_preparer.device
         
         # Layers
-        self.fc1 = nn.Linear(input_feature_length, hidden_dim_1_size)
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(dimensions["dropout"])
-        self.fc2 = nn.Linear(hidden_dim_1_size, hidden_dim_2_size)
-        self.fc3 = nn.Linear(hidden_dim_2_size, 1)
+        input_layer_sizes = [input_feature_length] + hyper_parameters.hidden_dimensions
+        output_layer_sizes = hyper_parameters.hidden_dimensions + [1]
+        self.layers = nn.Sequential(OrderedDict([
+            (f'layer {i + 1}', nn.Sequential(OrderedDict([
+                ('linear', nn.Linear(input_size, output_size)),
+                ('relu', nn.ReLU()),
+                ('batch_norm', nn.BatchNorm1d(output_size) if hyper_parameters.include_batch_norms else nn.Identity()),
+                ('dropoiut', nn.Dropout(p=hyper_parameters.dropout)),
+            ])))
+            for i, (input_size, output_size) in enumerate(zip(input_layer_sizes, output_layer_sizes))
+        ]))
         
     def forward(self, features):
         embedded_title_tokens = self.title_embedding(features['tokenized_titles']) # (batch, title_length, embedding_dim)
@@ -209,15 +196,8 @@ class HackerNewsNet(nn.Module):
             ],
             dim=1,
         )
-        
-        # TODO: Improve model architecture!!
-        x = self.fc1(x)
-        x = self.relu(x)
-        x = self.dropout(x)
-        x = self.fc2(x)
-        x = self.relu(x)
-        x = self.dropout(x)
-        x = self.fc3(x)
+
+        x = self.layers(x)
 
         return torch.squeeze(x, dim=1)  # The final dimension is size 1 - flatten it / remove it
 
@@ -329,19 +309,19 @@ def evaluate_model(model, data_loader, criterion, preparer):
     
     return avg_loss
 
-def train_model(settings: ModelRunSettings):
+def train_model(hyper_parameters: ModelHyperparameters, continue_training = False):
     """
     Train the model with given settings.
     
     Args:
-        settings: ModelRunSettings instance with hyperparameters
+        hyper_parameters: ModelRunSettings instance with hyperparameters
     
     Returns:
         dict: Training results with final test loss and other metrics
     """
     
-    if not isinstance(settings, ModelRunSettings):
-        raise TypeError("settings must be an instance of ModelRunSettings")
+    if not isinstance(hyper_parameters, ModelHyperparameters):
+        raise TypeError("hyperparameters must be an instance of ModelHyperparameters")
     
     # Load environment variables from .env file
     load_dotenv()
@@ -350,7 +330,8 @@ def train_model(settings: ModelRunSettings):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
 
-    settings.print_settings()
+    print("Hyperparameters:")
+    pprint(hyper_parameters.to_dict())
 
     print("Loading dataset...")
     datasets.config.IN_MEMORY_MAX_SIZE = 8 * 1024 * 1024 # 8GB
@@ -368,34 +349,37 @@ def train_model(settings: ModelRunSettings):
     print(f"Dataset loaded and split into train: {len(train_dataset)} and test: {len(test_dataset)}")
 
     # Get train and test loaders
-    train_loader = DataLoader(train_dataset, batch_size=settings.batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=settings.batch_size)
+    train_loader = DataLoader(train_dataset, batch_size=hyper_parameters.batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=hyper_parameters.batch_size)
 
     word_vectors = torch.load(folder + '/word_vectors.pt')
 
-    configuration = ModelConfiguration(
-        domain_counts_df=pd.read_csv(folder + '/domain_counts.csv'),
-        domain_min_count=4,
-        author_counts_df=pd.read_csv(folder + '/author_counts.csv'),
-        author_min_count=3,
+    feature_preparer = FeaturePreparer(
+        domain_map=create_id_map(
+            df=pd.read_csv(folder + '/domain_counts.csv'),
+            min_count=4,
+            column="domain"
+        ),
+        author_map=create_id_map(
+            df=pd.read_csv(folder + '/author_counts.csv'),
+            min_count=3,
+            column="author"
+        ),
         vocabulary=word_vectors["vocabulary"],
         vocabulary_embeddings=word_vectors["embeddings"],
         device=device,
-        hidden_dim_1=settings.hidden_dim_1,
-        hidden_dim_2=settings.hidden_dim_2,
-        dropout=settings.dropout
     )
 
-    print("Configuration:")
-    pprint(configuration.dimensions())
+    print("Feature parameters:")
+    pprint(feature_preparer.feature_parameters().to_dict())
 
     model_path = folder + '/hackernews_model.pth'
 
     # Initialize model
-    model = HackerNewsNet(configuration).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=settings.learning_rate)
+    model = HackerNewsNet(feature_preparer, hyper_parameters).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=hyper_parameters.learning_rate)
 
-    if settings.continue_model:
+    if continue_training:
         print(f"Loading model and optimizer state from {model_path}...")
         try:
             loaded_data = torch.load(model_path)
@@ -421,10 +405,10 @@ def train_model(settings: ModelRunSettings):
         'epochs_completed': 0
     }
 
-    for epoch in range(start_epoch, settings.epochs + 1):
-        print(f'\nEpoch {epoch}/{settings.epochs}')
-        train_loss = train_model_epoch(model, train_loader, criterion, optimizer, configuration, epoch)
-        test_loss = evaluate_model(model, test_loader, criterion, configuration)
+    for epoch in range(start_epoch, hyper_parameters.epochs + 1):
+        print(f'\nEpoch {epoch}/{hyper_parameters.epochs}')
+        train_loss = train_model_epoch(model, train_loader, criterion, optimizer, feature_preparer, epoch)
+        test_loss = evaluate_model(model, test_loader, criterion, feature_preparer)
 
         # Track best test loss
         if test_loss < best_test_loss:
@@ -475,22 +459,21 @@ def main():
     args = parser.parse_args()
 
     # Create ModelRunSettings using the simple constructor
-    settings = ModelRunSettings(
+    settings = ModelHyperparameters(
         batch_size=args.batch_size,
         epochs=args.epochs,
         learning_rate=args.learning_rate,
         dropout=args.dropout,
-        hidden_dim_1=args.hidden_dim_1,
-        hidden_dim_2=args.hidden_dim_2,
-        continue_model=getattr(args, "continue", False)
+        hidden_dimensions=[args.hidden_dim_1, args.hidden_dim_2],
     )
-    
+
+    continue_training = getattr(args, "continue", False)
+
     # Run training with the simplified interface
-    results = train_model(settings)
+    results = train_model(settings, continue_training=continue_training)
     
     print(f"\nTraining completed successfully!")
     print(f"Final results: {results}")
-
 
 if __name__ == '__main__':
     main()
