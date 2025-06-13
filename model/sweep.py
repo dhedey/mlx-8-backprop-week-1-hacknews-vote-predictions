@@ -30,12 +30,12 @@ SWEEP_CONFIG = {
             'values': [True, False]
         },
         'learning_rate': {
-            'min': 0.0001,
-            'max': 0.001,
+            'min': 0.001,
+            'max': 0.01,
             'distribution': 'log_uniform_values'
         },
         'dropout': {
-            'min': 0.1,
+            'min': 0.2,
             'max': 0.5,
             'distribution': 'uniform'
         },
@@ -52,7 +52,7 @@ SWEEP_CONFIG = {
             'values': [32, 64, 128]
         },
         'epochs': {
-            'values': [4, 16]
+            'values': [10, 40]
         }
     }
 }
