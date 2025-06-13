@@ -29,7 +29,7 @@ class ModelHyperparameters:
     dropout: float = 0.2
     hidden_dimensions: list[int] = field(default_factory=lambda: [256, 128, 64])
     freeze_embeddings: bool = False
-    include_batch_norms: bool = False
+    include_batch_norms: bool = True
     domain_embedding_size: int = 16
     author_embedding_size: int = 16
 
@@ -443,24 +443,24 @@ def main():
     """
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Train HackerNews score prediction model')
-    parser.add_argument('--batch-size', type=int, default=128,
-                        help='Batch size for training and evaluation (default: 128)')
-    parser.add_argument('--epochs', type=int, default=3,
-                        help='Number of training epochs (default: 3)')
+    parser.add_argument('--batch-size', type=int, default=512,
+                        help='Batch size for training and evaluation (default: 512)')
+    parser.add_argument('--epochs', type=int, default=50,
+                        help='Number of training epochs (default: 50)')
     parser.add_argument('--continue', type=bool, default=False,
                         help='Whether to keep training from a saved model (default: False)')
     parser.add_argument('--learning-rate', type=float, default=0.001,
                         help='Learning rate for optimizer (default: 0.001)')
-    parser.add_argument('--dropout', type=float, default=0.2,
-                        help='Dropout rate (default: 0.2)')
+    parser.add_argument('--dropout', type=float, default=0.4,
+                        help='Dropout rate (default: 0.4)')
     parser.add_argument('--hidden-dim-1', type=int, default=128,
                         help='First hidden layer dimension (default: 128)')
-    parser.add_argument('--hidden-dim-2', type=int, default=384,
-                        help='Second hidden layer dimension (default: 384)')
+    parser.add_argument('--hidden-dim-2', type=int, default=512,
+                        help='Second hidden layer dimension (default: 512)')
     parser.add_argument('--hidden-dim-3', type=int, default=256,
                         help='First hidden layer dimension (default: 256)')
-    parser.add_argument('--hidden-dim-4', type=int, default=64,
-                        help='Second hidden layer dimension (default: 64)')
+    parser.add_argument('--hidden-dim-4', type=int, default=32,
+                        help='Second hidden layer dimension (default: 32)')
     args = parser.parse_args()
 
     # Create ModelRunSettings using the simple constructor
