@@ -4,7 +4,8 @@ import torch
 from dateutil import parser as dateparser
 from datetime import datetime, UTC
 
-from model import HackerNewsNet
+from model import HackerNewsNet, TrainingHyperparameters
+
 
 def main():
     # Parse command line arguments
@@ -17,7 +18,7 @@ def main():
     folder = os.path.dirname(__file__)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
-    model = HackerNewsNet.load(folder, device)
+    model = HackerNewsNet.load(folder, device, training_parameters=TrainingHyperparameters.for_prediction())
 
     title = args.title
     author = args.author

@@ -252,13 +252,14 @@ def main():
     # Run training with the simplified interface
     results = train_model(
         model_parameters=ModelHyperparameters(
-            dropout=args.dropout,
             hidden_dimensions=[args.hidden_dim_1, args.hidden_dim_2],
         ),
         training_parameters=TrainingHyperparameters(
             batch_size=args.batch_size,
             epochs=args.epochs,
             learning_rate=args.learning_rate,
+            dropout=args.dropout,
+            freeze_embeddings=False,
         ),
         continue_training=continue_training,
     )

@@ -70,7 +70,6 @@ def train_sweep_run():
 
         results = train_model(
             model_parameters=ModelHyperparameters(
-                dropout=config.dropout,
                 hidden_dimensions=[config.hidden_dim_1, config.hidden_dim_2, config.hidden_dim_3],
                 include_batch_norms=config.include_batch_norms,
             ),
@@ -79,6 +78,7 @@ def train_sweep_run():
                 epochs=config.epochs,
                 learning_rate=config.learning_rate,
                 freeze_embeddings=config.freeze_embeddings,
+                dropout=config.dropout,
             ),
         )
         

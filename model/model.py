@@ -27,10 +27,21 @@ def extract_domain(url):
 
 @dataclass
 class TrainingHyperparameters:
-    batch_size: int = 128
-    epochs: int = 5
-    learning_rate: float = 0.001
-    freeze_embeddings: bool = False
+    batch_size: int
+    epochs: int
+    learning_rate: float
+    freeze_embeddings: bool
+    dropout: float
+
+    @classmethod
+    def for_prediction(cls):
+        cls(
+            batch_size=1,
+            epochs=0,
+            learning_rate=0,
+            freeze_embeddings=True,
+            dropout=0,
+        )
 
     def to_dict(self):
         return vars(self)
@@ -40,7 +51,6 @@ class TrainingHyperparameters:
 class ModelHyperparameters:
     domain_embedding_size: int = 16
     author_embedding_size: int = 16
-    dropout: float = 0.2
     hidden_dimensions: list[int] = field(default_factory=lambda: [256, 128, 64])
     include_batch_norms: bool = False
 
@@ -175,8 +185,7 @@ class FeaturePreparer:
 
 class HackerNewsNet(nn.Module):
     @classmethod
-    def load(cls, folder, device, training_parameters = None):
-        training_parameters = training_parameters or TrainingHyperparameters()
+    def load(cls, folder, device, training_parameters):
         loaded_data = torch.load(folder + '/hackernews_model.pth')
 
         model = cls(
@@ -211,7 +220,7 @@ class HackerNewsNet(nn.Module):
         # Layers
         input_layer_sizes = [input_feature_length] + model_params.hidden_dimensions
         output_layer_sizes = model_params.hidden_dimensions + [1]
-        dropouts = [model_params.dropout] * (len(model_params.hidden_dimensions)) + [0]
+        dropouts = [training_params.dropout] * (len(model_params.hidden_dimensions)) + [0]
         self.layers = nn.Sequential(OrderedDict([
             (f'layer {i + 1}', nn.Sequential(OrderedDict([
                 ('linear', nn.Linear(input_size, output_size)),
