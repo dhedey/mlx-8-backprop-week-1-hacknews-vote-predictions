@@ -234,18 +234,19 @@ class HackerNewsNet(nn.Module):
         self.device = feature_preparer.device
 
         # Layers
-        input_layer_sizes = [input_feature_length] + model_params.hidden_dimensions
-        output_layer_sizes = model_params.hidden_dimensions + [1]
-        dropouts = [training_params.dropout] * (len(model_params.hidden_dimensions)) + [0]
-        self.layers = nn.Sequential(OrderedDict([
-            (f'layer {i + 1}', nn.Sequential(OrderedDict([
+        input_layer_sizes = [input_feature_length] + model_params.hidden_dimensions[:-1]
+        output_layer_sizes = model_params.hidden_dimensions
+
+        self.inner_layers = nn.Sequential(OrderedDict([
+            (f'layer_{i + 1}', nn.Sequential(OrderedDict([
                 ('linear', nn.Linear(input_size, output_size)),
                 ('relu', nn.ReLU()),
                 ('batch_norm', nn.BatchNorm1d(output_size) if model_params.include_batch_norms else nn.Identity()),
-                ('dropout', nn.Dropout(p=dropout)),
+                ('dropout', nn.Dropout(p=training_params.dropout)),
             ])))
-            for i, (input_size, output_size, dropout) in enumerate(zip(input_layer_sizes, output_layer_sizes, dropouts))
+            for i, (input_size, output_size) in enumerate(zip(input_layer_sizes, output_layer_sizes))
         ]))
+        self.prediction_layer = nn.Linear(model_params.hidden_dimensions[-1], 1)
 
     def predict(self, title, url, author, time):
         self.eval()
@@ -303,7 +304,8 @@ class HackerNewsNet(nn.Module):
             dim=1,
         )
 
-        x = self.layers(x)
+        x = self.inner_layers(x)
+        x = self.prediction_layer(x)    # Final linear layer to get the output, without dropout / batch norm
 
         return torch.squeeze(x, dim=1)  # The final dimension is size 1 - flatten it / remove it
 

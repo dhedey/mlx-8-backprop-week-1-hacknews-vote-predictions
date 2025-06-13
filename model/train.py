@@ -185,8 +185,8 @@ def main():
     parser = argparse.ArgumentParser(description='Train HackerNews score prediction model')
     parser.add_argument('--batch-size', type=int, default=128,
                         help='Batch size for training and evaluation (default: 128)')
-    parser.add_argument('--epochs', type=int, default=3,
-                        help='Number of training epochs (default: 3)')
+    parser.add_argument('--epochs', type=int, default=4,
+                        help='Number of training epochs (default: 4)')
     parser.add_argument('--continue', type=bool, default=False,
                         help='Whether to keep training from a saved model (default: False)')
     parser.add_argument('--learning-rate', type=float, default=0.002,
