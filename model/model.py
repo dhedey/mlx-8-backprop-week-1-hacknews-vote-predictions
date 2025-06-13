@@ -211,14 +211,15 @@ class HackerNewsNet(nn.Module):
         # Layers
         input_layer_sizes = [input_feature_length] + model_params.hidden_dimensions
         output_layer_sizes = model_params.hidden_dimensions + [1]
+        dropouts = [model_params.dropout] * (len(model_params.hidden_dimensions)) + [0]
         self.layers = nn.Sequential(OrderedDict([
             (f'layer {i + 1}', nn.Sequential(OrderedDict([
                 ('linear', nn.Linear(input_size, output_size)),
                 ('relu', nn.ReLU()),
                 ('batch_norm', nn.BatchNorm1d(output_size) if model_params.include_batch_norms else nn.Identity()),
-                ('dropout', nn.Dropout(p=model_params.dropout)),
+                ('dropout', nn.Dropout(p=dropout)),
             ])))
-            for i, (input_size, output_size) in enumerate(zip(input_layer_sizes, output_layer_sizes))
+            for i, (input_size, output_size, dropout) in enumerate(zip(input_layer_sizes, output_layer_sizes, dropouts))
         ]))
 
     def predict(self, title, url, author, time):
